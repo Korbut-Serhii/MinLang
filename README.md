@@ -84,6 +84,35 @@ ptl (a + b) * 2
 
 ---
 
+### v0.3 — Conditionals and boolean logic
+
+**File:** `v0.3_minlang.py`
+
+The language gains branching. Boolean values and the full set of
+comparison operators are introduced.
+
+**What's new:**
+- Boolean literals `T` and `F`
+- Comparison operators: `== != < > <= >=`
+- Logical operators: `&&` `||` `!`
+- Conditionals: `if expr { }` and `el { }`
+- Curly-brace blocks `{ }`
+
+**Design note:** two new precedence levels are inserted above comparisons —
+`parse_or` and `parse_and`. `parse_block` is split out from `parse_statement`
+so that `if` bodies can contain any statement, including nested `if`s.
+
+```
+L x = 15
+if x > 10 {
+    ptl "big"
+} el {
+    ptl "small"
+}
+```
+
+---
+
 ## Usage
 
 ```bash

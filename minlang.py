@@ -1,7 +1,9 @@
 """
-MinLang Interpreter — v0.2
-Prototype
-Source files use the .ll extension
+MinLang Interpreter — v0.3
+Added conditionals (if / el) and comparison/logical operators.
+Booleans (T / F) introduced as first-class values.
+New keywords:  if  el  T  F
+New operators: == != < > <= >= && ||  !
 """
 
 import sys
@@ -14,10 +16,21 @@ TOKEN_PATTERNS = [
     ('STRING',   r'"(?:[^"\\]|\\.)*"'),
     ('FLOAT',    r'\d+\.\d+'),
     ('INT',      r'\d+'),
+    ('BOOL',     r'\b(T|F)\b'),
+    # Two-char ops must come before single-char
+    ('OP_EQ',    r'=='),
+    ('OP_NEQ',   r'!='),
+    ('OP_LTE',   r'<='),
+    ('OP_GTE',   r'>='),
+    ('OP_AND',   r'&&'),
+    ('OP_OR',    r'\|\|'),
+    ('OP_NOT',   r'!(?!=)'),
     ('ASSIGN',   r'='),
-    ('OP',       r'[+\-*/%]'),
+    ('OP',       r'[+\-*/%<>]'),
     ('LPAREN',   r'\('),
     ('RPAREN',   r'\)'),
+    ('LBRACE',   r'\{'),
+    ('RBRACE',   r'\}'),
     ('NEWLINE',  r'\n'),
     ('INDENT',   r'[ \t]+'),
     ('IDENT',    r'[A-Za-z_][A-Za-z0-9_]*'),
@@ -44,18 +57,18 @@ def tokenize(code):
 
 # ─── PARSER ──────────────────────────────────────────────────────
 #
-# Grammar (v0.2):
-#   statement  := let | assign | print_stmt
-#   let        := 'L' IDENT '=' expr
-#   assign     := IDENT '=' expr
-#   print_stmt := ('pt'|'ptl') expr
+# Grammar additions (v0.3):
+#   statement  += if_stmt
+#   if_stmt    := 'if' expr block ('el' block)?
+#   block      := '{' statement* '}'
 #
-#   Expressions with precedence:
-#   expr       := additive
+#   Expressions with precedence (lowest→highest):
+#   expr       := or
+#   or         := and ('||' and)*
+#   and        := compare ('&&' compare)*
+#   compare    := additive (cmpop additive)?
 #   additive   := multiplicative (('+' | '-') multiplicative)*
-#   multiplicative := unary (('*' | '/' | '%') unary)*
-#   unary      := '-' unary | primary
-#   primary    := INT | FLOAT | STRING | IDENT | '(' expr ')'
+#   ...
 
 class Parser:
     def __init__(self, tokens):
@@ -96,6 +109,19 @@ class Parser:
                 stmts.append(stmt)
         return ('BLOCK', stmts)
 
+    def parse_block(self):
+        self.expect('LBRACE')
+        stmts = []
+        while True:
+            self.skip_newlines()
+            if self.current()[0] == 'RBRACE':
+                self.advance()
+                break
+            if self.current()[0] == 'EOF':
+                raise SyntaxError("Unclosed block — missing '}'")
+            stmts.append(self.parse_statement())
+        return ('BLOCK', stmts)
+
     def parse_statement(self):
         self.skip_newlines()
         tok = self.current()
@@ -104,75 +130,110 @@ class Parser:
             self.advance()
             name = self.expect('IDENT')[1]
             self.expect('ASSIGN')
-            val = self.parse_expr()
-            return ('LET', name, val)
+            return ('LET', name, self.parse_expr())
 
         if tok[0] == 'IDENT' and tok[1] == 'pt':
             self.advance()
-            val = self.parse_expr()
-            return ('PRINT', val, False)
+            return ('PRINT', self.parse_expr(), False)
 
         if tok[0] == 'IDENT' and tok[1] == 'ptl':
             self.advance()
-            val = self.parse_expr()
-            return ('PRINT', val, True)
+            return ('PRINT', self.parse_expr(), True)
 
-        # Reassignment: IDENT = expr
+        if tok[0] == 'IDENT' and tok[1] == 'if':
+            return self.parse_if()
+
+        # Reassignment
         if tok[0] == 'IDENT':
             save = self.pos
             self.advance()
             if self.current()[0] == 'ASSIGN':
                 self.advance()
-                val = self.parse_expr()
-                return ('ASSIGN', tok[1], val)
-            else:
-                self.pos = save
+                return ('ASSIGN', tok[1], self.parse_expr())
+            self.pos = save
 
-        raise SyntaxError(f"Unknown statement: {tok}")
+        # Expression statement (e.g. bare call in future versions)
+        expr = self.parse_expr()
+        return ('EXPR_STMT', expr)
 
-    # ── Expression parsing with precedence ───────────────────────
+    def parse_if(self):
+        self.advance()   # consume 'if'
+        cond = self.parse_expr()
+        body = self.parse_block()
+        else_body = None
+        self.skip_newlines()
+        if self.current()[0] == 'IDENT' and self.current()[1] == 'el':
+            self.advance()
+            else_body = self.parse_block()
+        return ('IF', cond, body, [], else_body)
+
+    # ── Expression levels ────────────────────────────────────────
 
     def parse_expr(self):
-        return self.parse_additive()
+        return self.parse_or()
+
+    def parse_or(self):
+        left = self.parse_and()
+        while self.current()[0] == 'OP_OR':
+            self.advance()
+            left = ('BINOP', '||', left, self.parse_and())
+        return left
+
+    def parse_and(self):
+        left = self.parse_compare()
+        while self.current()[0] == 'OP_AND':
+            self.advance()
+            left = ('BINOP', '&&', left, self.parse_compare())
+        return left
+
+    def parse_compare(self):
+        left = self.parse_additive()
+        while self.current()[0] in ('OP_EQ', 'OP_NEQ', 'OP_LTE', 'OP_GTE', 'OP'):
+            op = self.current()[1]
+            if op in ('==', '!=', '<=', '>=', '<', '>'):
+                self.advance()
+                left = ('BINOP', op, left, self.parse_additive())
+            else:
+                break
+        return left
 
     def parse_additive(self):
         left = self.parse_multiplicative()
         while self.current()[0] == 'OP' and self.current()[1] in ('+', '-'):
             op = self.advance()[1]
-            right = self.parse_multiplicative()
-            left = ('BINOP', op, left, right)
+            left = ('BINOP', op, left, self.parse_multiplicative())
         return left
 
     def parse_multiplicative(self):
         left = self.parse_unary()
         while self.current()[0] == 'OP' and self.current()[1] in ('*', '/', '%'):
             op = self.advance()[1]
-            right = self.parse_unary()
-            left = ('BINOP', op, left, right)
+            left = ('BINOP', op, left, self.parse_unary())
         return left
 
     def parse_unary(self):
         if self.current()[0] == 'OP' and self.current()[1] == '-':
             self.advance()
-            val = self.parse_unary()
-            return ('UNOP', '-', val)
+            return ('UNOP', '-', self.parse_unary())
+        if self.current()[0] == 'OP_NOT':
+            self.advance()
+            return ('UNOP', '!', self.parse_unary())
         return self.parse_primary()
 
     def parse_primary(self):
         tok = self.current()
         if tok[0] == 'INT':
-            self.advance()
-            return ('INT', int(tok[1]))
+            self.advance(); return ('INT', int(tok[1]))
         if tok[0] == 'FLOAT':
-            self.advance()
-            return ('FLOAT', float(tok[1]))
+            self.advance(); return ('FLOAT', float(tok[1]))
+        if tok[0] == 'BOOL':
+            self.advance(); return ('BOOL', tok[1] == 'T')
         if tok[0] == 'STRING':
             self.advance()
             val = tok[1][1:-1].replace('\\n', '\n').replace('\\t', '\t')
             return ('STRING', val)
         if tok[0] == 'IDENT':
-            self.advance()
-            return ('VAR', tok[1])
+            self.advance(); return ('VAR', tok[1])
         if tok[0] == 'LPAREN':
             self.advance()
             expr = self.parse_expr()
@@ -188,7 +249,10 @@ class Interpreter:
         self.env = {}
 
     def run(self, ast):
-        _, stmts = ast
+        self.exec_block(ast)
+
+    def exec_block(self, node):
+        _, stmts = node
         for stmt in stmts:
             self.exec_stmt(stmt)
 
@@ -202,37 +266,59 @@ class Interpreter:
         elif kind == 'ASSIGN':
             _, name, val_node = node
             if name not in self.env:
-                raise NameError(f"Variable '{name}' not defined. Use 'L {name} = ...' to declare it.")
+                raise NameError(f"Undefined variable '{name}'")
             self.env[name] = self.eval(val_node)
 
         elif kind == 'PRINT':
             _, val_node, newline = node
-            val = self.eval(val_node)
-            print(self.to_str(val), end='\n' if newline else '')
+            print(self.to_str(self.eval(val_node)), end='\n' if newline else '')
+
+        elif kind == 'IF':
+            _, cond, body, _, else_body = node
+            if self.eval(cond):
+                self.exec_block(body)
+            elif else_body:
+                self.exec_block(else_body)
+
+        elif kind == 'EXPR_STMT':
+            self.eval(node[1])
 
     def eval(self, node):
         kind = node[0]
         if kind == 'INT':    return node[1]
         if kind == 'FLOAT':  return node[1]
+        if kind == 'BOOL':   return node[1]
         if kind == 'STRING': return node[1]
         if kind == 'VAR':
-            name = node[1]
-            if name not in self.env:
-                raise NameError(f"Variable '{name}' is not defined")
-            return self.env[name]
+            if node[1] not in self.env:
+                raise NameError(f"Variable '{node[1]}' is not defined")
+            return self.env[node[1]]
         if kind == 'BINOP':
             _, op, l, r = node
             lv, rv = self.eval(l), self.eval(r)
-            if op == '+': return lv + rv
-            if op == '-': return lv - rv
-            if op == '*': return lv * rv
-            if op == '/': return lv / rv
-            if op == '%': return lv % rv
+            if op == '+':  return lv + rv
+            if op == '-':  return lv - rv
+            if op == '*':  return lv * rv
+            if op == '/':  return lv / rv
+            if op == '%':  return lv % rv
+            if op == '<':  return lv < rv
+            if op == '>':  return lv > rv
+            if op == '<=': return lv <= rv
+            if op == '>=': return lv >= rv
+            if op == '==': return lv == rv
+            if op == '!=': return lv != rv
+            if op == '&&': return lv and rv
+            if op == '||': return lv or rv
         if kind == 'UNOP':
-            return -self.eval(node[2])
+            _, op, val = node
+            v = self.eval(val)
+            if op == '-': return -v
+            if op == '!': return not v
         raise RuntimeError(f"Unknown node: {node}")
 
     def to_str(self, val):
+        if val is True:  return "T"
+        if val is False: return "F"
         return str(val)
 
 
@@ -241,10 +327,8 @@ class Interpreter:
 def run_code(source):
     try:
         tokens = tokenize(source)
-        parser = Parser(tokens)
-        ast    = parser.parse()
-        interp = Interpreter()
-        interp.run(ast)
+        ast    = Parser(tokens).parse()
+        Interpreter().run(ast)
     except (SyntaxError, NameError, TypeError, RuntimeError, ZeroDivisionError) as e:
         print(f"[Error] {e}", file=sys.stderr)
 
@@ -257,4 +341,4 @@ if __name__ == '__main__':
             sys.exit(1)
         run_code(src)
     else:
-        print("MinLang v0.2 — usage: python minlang.py <file.ll>")
+        print("MinLang v0.3 — usage: python minlang.py <file.ll>")
