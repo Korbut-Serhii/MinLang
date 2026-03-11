@@ -111,6 +111,44 @@ if x > 10 {
 }
 ```
 
+
+---
+
+### v0.5 — Loops, functions, and scoped environments
+
+**File:** `v0.5_minlang.py`
+
+The biggest milestone. The language becomes Turing-complete.
+
+**What's new:**
+- `elif` — additional conditional branches
+- `lp var in iterable { }` — for loop
+- `wh cond { }` — while loop
+- `brk` / `cnt` — break and continue
+- `fn name(a, b) { rt a + b }` — function definitions
+- `rt expr` — return a value
+- `inp` / `inp "prompt" x` — read user input
+- Basic built-ins: `len sqrt abs pow max min rng int flt str push pop sort`
+
+**Design note:** the flat `self.env` dict is replaced by an `Environment`
+class with a parent-chain for lexical scoping. Closures are captured in the
+`Function` object at definition time. Control flow (`rt`, `brk`, `cnt`) is
+implemented via Python exceptions — a standard tree-walking interpreter
+technique that avoids threading return/break flags through every method manually.
+
+```
+fn factorial(n) {
+    if n <= 1 { rt 1 }
+    rt n * factorial(n - 1)
+}
+ptl factorial(10)
+
+lp i in rng(5) {
+    if i == 3 { cnt }
+    ptl i
+}
+```
+
 ---
 
 ## Usage
