@@ -55,6 +55,35 @@ pt n
 
 ---
 
+### v0.2 — Arithmetic and expressions
+
+**File:** `v0.2_minlang.py`
+
+Variables can now store computed values, not just literals.
+
+**What's new:**
+- Arithmetic operators `+ - * / %` with correct precedence
+- Unary minus: `-x`
+- Floating-point numbers (`FLOAT`)
+- Grouping with parentheses: `(a + b) * c`
+- `ptl` — print with a trailing newline (vs `pt` which doesn't)
+- Variable reassignment: `x = x + 1`
+
+**Design note:** operator precedence is encoded structurally via recursive
+descent — `parse_additive` calls `parse_multiplicative` calls `parse_unary`
+calls `parse_primary`. No precedence tables needed; the call hierarchy
+is the precedence hierarchy.
+
+```
+L a = 10
+L b = 3
+ptl a + b
+ptl a * b - 1
+ptl (a + b) * 2
+```
+
+---
+
 ## Usage
 
 ```bash
