@@ -149,6 +149,42 @@ lp i in rng(5) {
 }
 ```
 
+
+---
+
+### v0.8 — Collections, method calls, and f-strings
+
+**File:** `v0.8_minlang.py`
+
+The language gets data structures and string interpolation.
+
+**What's new:**
+- Lists: `[1, 2, 3]`, index access `x[0]`, index assignment `x[0] = 99`
+- Dicts: `{"key": "val"}`, access `d["key"]`, assignment `d["k"] = v`
+- F-strings: `f"hello {name}, sum = {a + b}"`
+- Method call syntax: `"hello".up()`, `lst.push(4)`
+- Attribute shorthand: `lst.len` instead of `len(lst)`
+- Extended stdlib: `map`, `flt2`, `red`, `rev`, `sum`, `join`, `split`,
+  `find`, `replace`, `rand`, `randInt`, `pick`
+
+**Design note:** `parse_postfix` is extended with three chained cases —
+function call `()`, index `[]`, and dot access `.`. Because each case loops
+back to check for another postfix operator, chains like `a[0].split(",")[1]`
+parse correctly without extra rules. F-strings are compiled lazily: the
+`{expr}` segments are re-tokenized and re-parsed at evaluation time rather
+than at parse time, which keeps the main parser simple.
+
+```
+L nums = [3, 1, 4, 1, 5, 9]
+ptl nums.sort()
+
+fn double(x) { rt x * 2 }
+ptl map(nums, double)
+
+L person = {"name": "Alice", "age": 30}
+ptl f"Name: {person["name"]}, age: {person["age"]}"
+```
+
 ---
 
 ## Usage
