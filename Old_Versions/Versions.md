@@ -6,7 +6,7 @@ Maximum expressive power, minimum keystrokes.
 This repository tracks the full development history of the interpreter —
 from a bare-bones "variables and print" concept all the way to
 a complete implementation with collections, closures, higher-order functions,
-and a standard library.
+structs, and a standard library.
 
 ---
 
@@ -387,8 +387,8 @@ strip unnecessary trailing zeros. The `fmt` built-in gives full control
 for cases that need precise formatting.
 
 ```
-ptl 3.0          ## 3
-ptl 3.14         ## 3.14
+ptl 3.0              ## 3
+ptl 3.14             ## 3.14
 ptl fmt(pi, ".4f")   ## 3.1416
 ```
 
@@ -401,23 +401,152 @@ position (`parse_primary` checks for `fn` before falling through to `VAR`).
 Everything else was additive — new AST node types, new `exec_stmt`/`eval`
 branches, new built-in lambdas registered in `_setup_builtins`.
 
-```
-## All v1.1 features in one snippet
-L [a, *rest] = [1, 2, 3, 4, 5]
-a += 10
-ptl a                                     ## 11
-ptl 2 ** len(rest)                        ## 16  (2**4)
-ptl len(rest) > 3 ? "long" : "short"      ## short
+---
 
-try {
-    ptl int("bad")
-} catch e {
-    ptl f"error: {e}"
+### v1.2 — Structs (OOP) and line numbers in errors
+
+**File:** `v1.2_minlang.py`
+
+The language gains its first object-oriented feature: user-defined types
+with methods. Error messages now report the exact source line where a
+problem occurred, making debugging significantly faster.
+
+**What's new:**
+
+#### Structs — user-defined types `struct Name { }`
+A struct bundles data and the functions that operate on it into a single
+named type. Each instance of a struct carries its own copy of the attributes
+set inside methods.
+
+```
+struct Dog {
+    fn init(name, age) {
+        self.name = name
+        self.age  = age
+    }
+    fn bark() {
+        ptl f"Woof! I am {self.name}."
+    }
 }
 
-L d = {"x": 10, "y": 20}
-L {x, y} = d
-ptl map([x, y], fn(v) { rt v * 2 })      ## [20, 40]
+L d = Dog("Rex", 3)
+d.bark()
+```
+
+#### `self` — the instance inside a method
+Inside any struct method, `self` refers to the specific instance the method
+was called on. `self` is injected automatically — it does not appear in the
+parameter list. Attributes are created and read via `self.name`.
+
+#### Constructor `init`
+The method named `init` runs automatically whenever an instance is created.
+It receives any arguments passed to the struct call and is the right place
+to set up initial attribute values.
+
+#### Attribute assignment — outside and inside methods
+Attributes can be written from outside the struct as well as from within:
+
+```
+d.name = "Max"       ## from outside
+## self.age += 1      ## from inside a method (compound assign works too)
+```
+
+Compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`) is fully supported on
+`self` attributes inside methods.
+
+#### Custom `str` method
+Defining a method called `str` controls how an instance is displayed when
+converted to text — including inside f-strings and when `str(obj)` is called:
+
+```
+struct Point {
+    fn init(x, y) { self.x = x   self.y = y }
+    fn str()      { rt f"Point({self.x}, {self.y})" }
+}
+L p = Point(3, 4)
+ptl str(p)    ## Point(3, 4)
+```
+
+#### OOP built-in functions
+Three new built-ins support runtime type inspection of struct instances:
+
+| Function | Returns |
+|---|---|
+| `isObj(v)` | `T` if `v` is any struct instance |
+| `className(v)` | The struct name as a string, e.g. `"Dog"` |
+| `instanceof(v, Cls)` | `T` if `v` is an instance of `Cls` specifically |
+
+#### Nil-safe access on instances
+The existing `?.` operator works on struct instances: `obj?.attr` and
+`obj?.method()` return `nil` without crashing if `obj` is `nil`.
+
+#### Line numbers in all error messages
+The tokenizer now tracks the current line number and attaches it to every
+token. The parser includes `[line N]` in every `SyntaxError`. The
+interpreter wraps every statement in a `SOURCELOC` node that keeps
+`_current_line` up to date, so runtime errors also show the correct line:
+
+```
+[Error] [line 7] Variable 'scroe' is not defined
+[Error] [line 3] Unknown character: '@'
+[Error] [line 12] division by zero
+```
+
+This applies to errors inside struct methods too — the reported line is the
+line inside the method body where the failure occurred, not the line of the
+method call.
+
+**Design notes:**
+
+*Structs in the parser:* `parse_struct` reads a `struct Name { }` block and
+collects method definitions using the existing `parse_fn` helper. The result
+is a `STRUCTDEF` AST node containing a dict of `(params, body, variadic)`
+triples.
+
+*Runtime representation:* `MinLangClass` holds the struct name and its
+method `Function` objects. `MinLangInstance` holds a reference to its class
+and a plain dict of instance attributes. Calling a `MinLangClass` like a
+function constructs a `MinLangInstance` and calls `init` if defined.
+`_call_method` injects `self` into the method's local scope before executing.
+
+*Attribute assignment (`ATTR_ASSIGN`):* the parser detects `ident.attr =`
+patterns in statement position. The interpreter checks that the target is a
+`MinLangInstance` and writes directly to `instance.attrs`.
+
+*Compound attribute assignment (`ATTR_COMPOUND_ASSIGN`):* detected as
+`ident.attr op=` in statement position, resolves to a read-modify-write
+on `instance.attrs`.
+
+*`_dispatch_method` routing:* when `obj` is a `MinLangInstance`, method
+dispatch goes through `_call_method` with `self` bound, before any
+string/list/dict method checks.
+
+*Line tracking:* each token in the tokenizer is now a `(type, value, line)`
+triple. Line counts are bumped inside the tokenizer for every `\n` in any
+matched span, which handles multiline strings correctly. The parser's
+`parse`/`parse_block` wrap each statement in `('SOURCELOC', line, stmt)`.
+`exec_block` unwraps these to update `self._current_line` before executing.
+`run_code` prepends `[line N]` to any runtime error that doesn't already
+carry a line prefix.
+
+```
+## All v1.2 features in one snippet
+
+struct Vector2 {
+    fn init(x, y) { self.x = x   self.y = y }
+    fn add(other)  { rt Vector2(self.x + other.x, self.y + other.y) }
+    fn len()       { rt sqrt(self.x ** 2 + self.y ** 2) }
+    fn str()       { rt f"Vec({self.x}, {self.y})" }
+}
+
+L v1 = Vector2(3, 4)
+L v2 = Vector2(1, 2)
+L v3 = v1.add(v2)
+
+ptl str(v1)               ## Vec(3, 4)
+ptl v1.len()              ## 5
+ptl instanceof(v1, Vector2)  ## T
+ptl className(v1)         ## Vector2
 ```
 
 ---
@@ -431,7 +560,8 @@ v0.3_minlang.py   — conditionals and boolean logic
 v0.5_minlang.py   — loops, functions, lexical scoping
 v0.8_minlang.py   — lists, dicts, method calls, f-strings
 v1.0_minlang.py   — standard library and REPL polish
-v1.1_minlang.py   — syntax sugar, safety, and modules  ← current
+v1.1_minlang.py   — syntax sugar, safety, and modules
+v1.2_minlang.py   — structs (OOP) and line numbers in errors  ← current
 ```
 
 ## Usage

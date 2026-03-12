@@ -1,0 +1,62 @@
+## A contact book where each contact is a struct instance.
+
+struct Contact {
+    fn init(name, phone, email) {
+        self.name  = name
+        self.phone = phone
+        self.email = email
+    }
+
+    fn display() {
+        ptl f"  Name:  {self.name}"
+        ptl f"  Phone: {self.phone}"
+        ptl f"  Email: {self.email}"
+    }
+
+    fn str() {
+        rt self.name
+    }
+}
+
+L contacts = []
+
+ptl "=== Contact Book ==="
+ptl "Commands: add / find / list / quit"
+
+wh T {
+    inp "> " command
+
+    if command == "quit" {
+        ptl "Goodbye!"
+        brk
+
+    } elif command == "add" {
+        inp "Name:  " cname
+        inp "Phone: " cphone
+        inp "Email: " cemail
+        push(contacts, Contact(cname, cphone, cemail))
+        ptl f"Saved {cname}."
+
+    } elif command == "list" {
+        if len(contacts) == 0 {
+            ptl "No contacts yet."
+        } el {
+            lp c in contacts {
+                c.display()
+                ptl "  ─────────"
+            }
+        }
+
+    } elif command == "find" {
+        inp "Search name: " query
+        L found = flt2(contacts, fn(c) { rt c.name.lo().has(lo(query)) })
+        if len(found) == 0 {
+            ptl "No matches."
+        } el {
+            lp c in found { c.display() }
+        }
+
+    } el {
+        ptl "Unknown command."
+    }
+}

@@ -1,33 +1,30 @@
 """
-MinLang Interpreter — v1.1
+MinLang Interpreter — v1.2
 A minimalist programming language. Maximum power, minimum keystrokes.
-Source files use the .ll extension.
+Source files use the .minl extension.
 
-New in v1.1:
-    ✦ Compound assignment:   +=  -=  *=  /=  %=
-    ✦ Multiline strings:     \"\"\"...\"\"\"
-    ✦ Error handling:        try { } catch e { }
-    ✦ Power operator:        2 ** 10
-    ✦ List/string slices:    lst[1:3]  lst[:5]  lst[2:]
-    ✦ Variadic functions:    fn sum(*args) { }
-    ✦ Ternary expression:    cond ? a : b
-    ✦ Dict methods:          .keys()  .values()  .items()  .get()
-    ✦ Module system:         use "utils.ll"
-    ✦ Nil-safe access:       obj?.method()   obj?.attr
-    ✦ Destructuring:         L [a, b] = lst   L {x, y} = dct
-    ✦ Cleaner float output:  3.0 → 3,  1e6 → 1000000
+New in v1.2:
+    ✦ Structs (OOP):        struct Dog { fn init(name, age) { self.name = name } }
+    ✦ Instance creation:    L d = Dog("Rex", 3)
+    ✦ Attribute access:     ptl d.name
+    ✦ Attribute assignment: d.name = "Max"   /   self.x = val  (inside methods)
+    ✦ Method calls:         d.bark()
+    ✦ instanceof check:     instanceof(d, Dog)  → T
+    ✦ className builtin:    className(d)        → "Dog"
+    ✦ Line numbers:         all errors now report the source line
 
 Architecture:
-    Source code (.ll file)
+    Source code (.minl file)
         │
         ▼
-    Tokenizer  ── turns raw text into a flat list of tokens
+    Tokenizer  ── turns raw text into a flat list of (type, value, line) tokens
         │
         ▼
     Parser     ── turns tokens into an Abstract Syntax Tree (AST)
-        │
+        │            statements are wrapped with SOURCELOC for line tracking
         ▼
-    Interpreter── walks the AST and executes each node
+    Interpreter── walks the AST and executes each node;
+                tracks current line for runtime error reporting
 """
 
 import sys
@@ -39,8 +36,8 @@ import os
 # ═══════════════════════════════════════════════════════════════
 #  STAGE 1 — TOKENIZER
 #  Reads raw source text and groups characters into named tokens.
-#  Each entry in TOKEN_PATTERNS is tried left-to-right; first
-#  match wins.
+#  Each token is now a (type, value, line) triple so that both
+#  the parser and the interpreter can report accurate positions.
 # ═══════════════════════════════════════════════════════════════
 
 TOKEN_PATTERNS = [
@@ -123,11 +120,13 @@ TOKEN_PATTERNS = [
 
 def tokenize(code):
     """
-    Convert a source string into a list of (type, value) token pairs.
+    Convert a source string into a list of (type, value, line) token triples.
+    Line numbers start at 1 and are bumped on every newline character.
     Raises SyntaxError on unrecognised characters.
     """
     tokens = []
-    pos = 0
+    pos    = 0
+    line   = 1
     while pos < len(code):
         matched = False
         for ttype, pattern in TOKEN_PATTERNS:
@@ -135,12 +134,15 @@ def tokenize(code):
             if m:
                 val = m.group(0)
                 if ttype not in ('COMMENT', 'INDENT'):
-                    tokens.append((ttype, val))
-                pos += len(val)
+                    tokens.append((ttype, val, line))
+                # Advance line counter by any newlines inside the matched text
+                # (handles multiline strings, comments with \n, and plain NEWLINE)
+                line += val.count('\n')
+                pos  += len(val)
                 matched = True
                 break
         if not matched:
-            raise SyntaxError(f"Unknown character: '{code[pos]}' at position {pos}")
+            raise SyntaxError(f"[line {line}] Unknown character: '{code[pos]}'")
     return tokens
 
 
@@ -151,12 +153,18 @@ def tokenize(code):
 #    ternary (?:)  →  ||  →  &&  →  comparisons
 #    →  +/-  →  */% →  ** (right-assoc)
 #    →  unary (-/!)  →  postfix  →  primary
+#
+#  v1.2: tokens are now (type, value, line) triples.
+#        Helper current_line() exposes the line of the current token.
+#        All SyntaxErrors include the offending line number.
+#        Statements in every block are wrapped in SOURCELOC nodes
+#        so the interpreter can track lines at runtime too.
 # ═══════════════════════════════════════════════════════════════
 
 class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
-        self.pos = 0
+        self.pos    = 0
 
     # ── Navigation helpers ──────────────────────────────────────
 
@@ -167,7 +175,16 @@ class Parser:
     def current(self):
         if self.pos < len(self.tokens):
             return self.tokens[self.pos]
-        return ('EOF', '')
+        return ('EOF', '', 0)
+
+    def current_line(self):
+        """Return the source line of the current token (1-based)."""
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos][2]
+        # If we're past the end, use the last known line
+        if self.tokens:
+            return self.tokens[-1][2]
+        return 1
 
     def advance(self):
         tok = self.current()
@@ -178,9 +195,13 @@ class Parser:
         self.skip_newlines()
         tok = self.advance()
         if tok[0] != ttype:
-            raise SyntaxError(f"Expected {ttype} but got {tok}")
+            raise SyntaxError(
+                f"[line {tok[2]}] Expected {ttype} but got '{tok[1]}'"
+            )
         if val and tok[1] != val:
-            raise SyntaxError(f"Expected '{val}' but got '{tok[1]}'")
+            raise SyntaxError(
+                f"[line {tok[2]}] Expected '{val}' but got '{tok[1]}'"
+            )
         return tok
 
     # ── Top-level entry point ────────────────────────────────────
@@ -191,9 +212,10 @@ class Parser:
             self.skip_newlines()
             if self.current()[0] == 'EOF':
                 break
+            line = self.current_line()
             stmt = self.parse_statement()
             if stmt:
-                stmts.append(stmt)
+                stmts.append(('SOURCELOC', line, stmt))
         return ('BLOCK', stmts)
 
     def parse_block(self):
@@ -205,10 +227,13 @@ class Parser:
                 self.advance()
                 break
             if self.current()[0] == 'EOF':
-                raise SyntaxError("Unclosed block — missing '}'")
+                raise SyntaxError(
+                    f"[line {self.current_line()}] Unclosed block — missing '}}'"
+                )
+            line = self.current_line()
             stmt = self.parse_statement()
             if stmt:
-                stmts.append(stmt)
+                stmts.append(('SOURCELOC', line, stmt))
         return ('BLOCK', stmts)
 
     # ── Statement dispatcher ─────────────────────────────────────
@@ -220,11 +245,15 @@ class Parser:
         if tok[0] == 'EOF':
             return None
 
-        # ── use "file.ll"  →  module import ──────────────────────
+        # ── use "file.minl"  →  module import ──────────────────────
         if tok[0] == 'IDENT' and tok[1] == 'use':
             self.advance()
             path = self.parse_expr()
             return ('USE', path)
+
+        # ── struct  →  OOP class definition ──────────────────────
+        if tok[0] == 'IDENT' and tok[1] == 'struct':
+            return self.parse_struct()
 
         # ── L  →  variable declaration (plain / destructuring) ───
         if tok[0] == 'IDENT' and tok[1] == 'L':
@@ -232,7 +261,7 @@ class Parser:
             # List destructuring: L [a, b, *rest] = expr
             if self.current()[0] == 'LBRACKET':
                 self.advance()
-                names = []
+                names     = []
                 rest_name = None
                 while self.current()[0] != 'RBRACKET':
                     if self.current()[0] == 'OP' and self.current()[1] == '*':
@@ -311,17 +340,11 @@ class Parser:
         if tok[0] == 'IDENT' and tok[1] == 'try':
             return self.parse_try()
 
-        # ── Assignment / compound assignment / index assignment ───
+        # ── Assignment / compound assignment / index+attr assign ──
         if tok[0] == 'IDENT':
             save = self.pos
             self.advance()
 
-            # Simple assignment: x = expr
-            if self.current()[0] == 'ASSIGN':
-                self.advance()
-                return ('ASSIGN', tok[1], self.parse_expr())
-
-            # Compound assignment: x += expr  etc.
             compound_ops = {
                 'PLUS_ASSIGN':  '+',
                 'MINUS_ASSIGN': '-',
@@ -329,12 +352,19 @@ class Parser:
                 'DIV_ASSIGN':   '/',
                 'MOD_ASSIGN':   '%',
             }
+
+            # Simple assignment:  x = expr
+            if self.current()[0] == 'ASSIGN':
+                self.advance()
+                return ('ASSIGN', tok[1], self.parse_expr())
+
+            # Compound assignment:  x += expr  etc.
             if self.current()[0] in compound_ops:
                 op = compound_ops[self.current()[0]]
                 self.advance()
                 return ('COMPOUND_ASSIGN', tok[1], op, self.parse_expr())
 
-            # Index assignment: x[i] = val
+            # Index assignment:  x[i] = val
             if self.current()[0] == 'LBRACKET':
                 self.advance()
                 idx = self.parse_expr()
@@ -344,8 +374,25 @@ class Parser:
                     return ('INDEX_ASSIGN', tok[1], idx, self.parse_expr())
                 else:
                     self.pos = save   # not an assignment, rewind
+
+            # Attribute assignment / compound attr assignment:
+            #   x.attr = val   and   self.x += val  (inside methods)
+            elif self.current()[0] == 'DOT':
+                self.advance()            # consume dot
+                if self.current()[0] == 'IDENT':
+                    attr_name = self.advance()[1]
+                    if self.current()[0] == 'ASSIGN':
+                        self.advance()
+                        return ('ATTR_ASSIGN', tok[1], attr_name, self.parse_expr())
+                    if self.current()[0] in compound_ops:
+                        op = compound_ops[self.current()[0]]
+                        self.advance()
+                        return ('ATTR_COMPOUND_ASSIGN', tok[1], attr_name, op, self.parse_expr())
+                # Not a bare attr assignment — fall through to expression
+                self.pos = save
+
             else:
-                self.pos = save       # not an assignment, rewind
+                self.pos = save           # not any assignment, rewind
 
         # Fallthrough: expression used as statement
         return ('EXPR_STMT', self.parse_expr())
@@ -354,9 +401,9 @@ class Parser:
 
     def parse_if(self):
         self.advance()
-        cond = self.parse_expr()
-        body = self.parse_block()
-        elifs = []
+        cond      = self.parse_expr()
+        body      = self.parse_block()
+        elifs     = []
         else_body = None
         while True:
             self.skip_newlines()
@@ -373,10 +420,10 @@ class Parser:
 
     def parse_loop(self):
         self.advance()
-        var = self.expect('IDENT')[1]
+        var      = self.expect('IDENT')[1]
         self.expect('IDENT', 'in')
         iterable = self.parse_expr()
-        body = self.parse_block()
+        body     = self.parse_block()
         return ('FOR', var, iterable, body)
 
     def parse_while(self):
@@ -385,10 +432,10 @@ class Parser:
 
     def parse_fn(self):
         self.advance()
-        name = self.expect('IDENT')[1]
+        name     = self.expect('IDENT')[1]
         self.expect('LPAREN')
         params   = []
-        variadic = None   # name of the *args parameter, if present
+        variadic = None
         while self.current()[0] != 'RPAREN':
             if self.current()[0] == 'OP' and self.current()[1] == '*':
                 self.advance()
@@ -401,12 +448,46 @@ class Parser:
         return ('FUNCDEF', name, params, self.parse_block(), variadic)
 
     def parse_try(self):
-        self.advance()   # consume 'try'
-        body = self.parse_block()
+        self.advance()                  # consume 'try'
+        body    = self.parse_block()
         self.skip_newlines()
         self.expect('IDENT', 'catch')
         err_var = self.expect('IDENT')[1]
         return ('TRY', body, err_var, self.parse_block())
+
+    def parse_struct(self):
+        """
+        struct Name {
+            fn init(field1, field2) { self.field1 = field1 }
+            fn method() { ... }
+        }
+        'self' is injected automatically — do NOT include it in parameter lists.
+        """
+        self.advance()                  # consume 'struct'
+        name = self.expect('IDENT')[1]
+        self.expect('LBRACE')
+        methods = {}                    # method_name → (params, body, variadic)
+        while True:
+            self.skip_newlines()
+            if self.current()[0] == 'RBRACE':
+                self.advance()
+                break
+            if self.current()[0] == 'EOF':
+                raise SyntaxError(
+                    f"[line {self.current_line()}] Unclosed struct '{name}' — missing '}}'"
+                )
+            if not (self.current()[0] == 'IDENT' and self.current()[1] == 'fn'):
+                raise SyntaxError(
+                    f"[line {self.current_line()}] Expected method definition inside struct '{name}'"
+                )
+            fn_node = self.parse_fn()   # ('FUNCDEF', fname, params, body, variadic)
+            _, fname, params, body, variadic = fn_node
+            if fname in methods:
+                raise SyntaxError(
+                    f"Duplicate method '{fname}' in struct '{name}'"
+                )
+            methods[fname] = (params, body, variadic)
+        return ('STRUCTDEF', name, methods)
 
     # ── Expression parsing (recursive descent) ───────────────────
     #
@@ -429,7 +510,7 @@ class Parser:
         cond = self.parse_or()
         if self.current()[0] == 'QMARK':
             self.advance()
-            true_val = self.parse_or()
+            true_val  = self.parse_or()
             self.expect('COLON')
             false_val = self.parse_or()
             return ('TERNARY', cond, true_val, false_val)
@@ -593,7 +674,6 @@ class Parser:
 
         if tok[0] == 'MLSTRING':
             self.advance()
-            # Strip triple quotes; process escape sequences
             val = tok[1][3:-3].replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"')
             return ('STRING', val)
 
@@ -605,8 +685,7 @@ class Parser:
             if tok[1] == 'nil':
                 self.advance()
                 return ('NIL',)
-            # Anonymous function expression: fn(params) { body }
-            # Allows lambdas inline, e.g. map(lst, fn(x) { rt x * 2 })
+            # Anonymous function: fn(params) { body }
             if tok[1] == 'fn':
                 self.advance()
                 self.expect('LPAREN')
@@ -655,7 +734,7 @@ class Parser:
             self.expect('RBRACE')
             return ('DICT', pairs)
 
-        raise SyntaxError(f"Unexpected token: {tok}")
+        raise SyntaxError(f"[line {tok[2]}] Unexpected token: '{tok[1]}'")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -668,6 +747,11 @@ class Parser:
 #
 #  Control flow (rt / brk / cnt) is implemented via Python
 #  exceptions so they bubble through arbitrarily nested calls.
+#
+#  v1.2 additions:
+#    MinLangClass    — runtime representation of a struct type
+#    MinLangInstance — runtime representation of a struct instance
+#    SOURCELOC nodes — drive self._current_line for error reporting
 # ═══════════════════════════════════════════════════════════════
 
 class ReturnException(Exception):
@@ -716,10 +800,39 @@ class Function:
         return f"<fn {self.name}>"
 
 
+class MinLangClass:
+    """
+    Runtime representation of a struct definition.
+    Calling an instance of this class (e.g. Dog("Rex", 3)) constructs
+    a MinLangInstance and runs the 'init' method if present.
+    """
+    def __init__(self, name, methods):
+        self.name    = name
+        self.methods = methods  # dict[str, Function]
+
+    def __repr__(self):
+        return f"<class {self.name}>"
+
+
+class MinLangInstance:
+    """
+    Runtime representation of a struct instance.
+    Attributes are stored in a plain dict; methods are looked up
+    on the class and called with 'self' injected automatically.
+    """
+    def __init__(self, klass):
+        self.klass = klass
+        self.attrs = {}         # instance attributes set by init / methods
+
+    def __repr__(self):
+        return f"<{self.klass.name} instance>"
+
+
 class Interpreter:
 
     def __init__(self):
-        self.global_env = Environment()
+        self.global_env   = Environment()
+        self._current_line = None   # updated by SOURCELOC; shown in runtime errors
         self._setup_builtins()
 
     # ── Built-in functions ────────────────────────────────────────
@@ -773,7 +886,19 @@ class Interpreter:
         e.set('isDct',  lambda a: isinstance(a[0], dict))
         e.set('isBool', lambda a: isinstance(a[0], bool))
         e.set('isNil',  lambda a: a[0] is None)
+        e.set('isObj',  lambda a: isinstance(a[0], MinLangInstance))
         e.set('type',   lambda a: type(a[0]).__name__)
+
+        # OOP helpers
+        e.set('instanceof', lambda a: (
+            isinstance(a[0], MinLangInstance) and
+            isinstance(a[1], MinLangClass)    and
+            a[0].klass.name == a[1].name
+        ))
+        e.set('className', lambda a: (
+            a[0].klass.name if isinstance(a[0], MinLangInstance)
+            else type(a[0]).__name__
+        ))
 
         # String functions
         e.set('len',        lambda a: len(a[0]))
@@ -789,12 +914,11 @@ class Interpreter:
         e.set('contains',   lambda a: a[1] in a[0])
         e.set('startsWith', lambda a: a[0].startswith(a[1]))
         e.set('endsWith',   lambda a: a[0].endswith(a[1]))
-        # fmt: format a number/value using Python format spec, e.g. fmt(3.14159, ".2f") → "3.14"
         e.set('fmt',        lambda a: format(a[0], a[1] if len(a) > 1 else ''))
 
         # List functions
         e.set('rng',     lambda a: list(range(int(a[0]))) if len(a) == 1
-                                  else list(range(int(a[0]), int(a[1]),
+                                    else list(range(int(a[0]), int(a[1]),
                                             int(a[2]) if len(a) > 2 else 1)))
         e.set('push',    lambda a: a[0].append(a[1]) or a[0])
         e.set('pop',     lambda a: a[0].pop())
@@ -844,28 +968,56 @@ class Interpreter:
         e.set('sysArgs', lambda _: sys.argv[2:])
         e.set('sysEnv',  lambda a: os.environ.get(a[0], None))
 
-        # Constants (plain values, not functions)
+        # Constants
         e.vars['pi']  = math.pi
         e.vars['inf'] = float('inf')
         e.vars['nan'] = float('nan')
 
-    # ── Function calling ──────────────────────────────────────────
+    # ── Function / constructor calling ────────────────────────────
 
     def _call_fn(self, fn, args):
         if callable(fn):
             return fn(args)
+
         elif isinstance(fn, Function):
-            env = Environment(fn.env)            # child of the closure scope
+            env = Environment(fn.env)
             for param, arg in zip(fn.params, args):
                 env.set(param, arg)
-            if fn.variadic is not None:          # bind remaining args as list
+            if fn.variadic is not None:
                 env.set(fn.variadic, list(args[len(fn.params):]))
             try:
                 self.exec_block(fn.body, env)
             except ReturnException as r:
                 return r.val
             return None
-        raise TypeError(f"Cannot call: {fn}")
+
+        elif isinstance(fn, MinLangClass):
+            # Struct constructor: create instance, call 'init' if defined
+            instance = MinLangInstance(fn)
+            init = fn.methods.get('init')
+            if init:
+                self._call_method(instance, init, args)
+            return instance
+
+        raise TypeError(f"Cannot call: {fn!r}")
+
+    def _call_method(self, instance, method_fn, args):
+        """
+        Execute a struct method with 'self' bound to the instance.
+        'self' is injected as the first name in the method's scope;
+        it does NOT appear in the user-facing param list.
+        """
+        env = Environment(method_fn.env)
+        env.set('self', instance)
+        for param, arg in zip(method_fn.params, args):
+            env.set(param, arg)
+        if method_fn.variadic is not None:
+            env.set(method_fn.variadic, list(args[len(method_fn.params):]))
+        try:
+            self.exec_block(method_fn.body, env)
+        except ReturnException as r:
+            return r.val
+        return None
 
     def _reduce(self, lst, fn, acc):
         for item in lst:
@@ -883,7 +1035,12 @@ class Interpreter:
         _, stmts = node
         result = None
         for stmt in stmts:
-            result = self.exec_stmt(stmt, env)
+            # SOURCELOC wrapper: update line tracker, then execute inner node
+            if stmt[0] == 'SOURCELOC':
+                self._current_line = stmt[1]
+                result = self.exec_stmt(stmt[2], env)
+            else:
+                result = self.exec_stmt(stmt, env)
         return result
 
     # ── Statement executor ────────────────────────────────────────
@@ -900,17 +1057,47 @@ class Interpreter:
             env.assign(name, self.eval(val_node, env))
 
         elif kind == 'COMPOUND_ASSIGN':
-            # x += expr  →  x = x op expr
             _, name, op, val_node = node
-            current  = env.get(name)
-            delta    = self.eval(val_node, env)
-            ops = {'+': lambda a,b: a+b, '-': lambda a,b: a-b,
-                   '*': lambda a,b: a*b, '/': lambda a,b: a/b, '%': lambda a,b: a%b}
+            current = env.get(name)
+            delta   = self.eval(val_node, env)
+            ops = {'+': lambda a, b: a + b, '-': lambda a, b: a - b,
+                   '*': lambda a, b: a * b, '/': lambda a, b: a / b,
+                    '%': lambda a, b: a % b}
             env.assign(name, ops[op](current, delta))
 
         elif kind == 'INDEX_ASSIGN':
             _, name, idx_node, val_node = node
             env.get(name)[self.eval(idx_node, env)] = self.eval(val_node, env)
+
+        elif kind == 'ATTR_ASSIGN':
+            # obj.attr = val
+            _, obj_name, attr, val_node = node
+            obj = env.get(obj_name)
+            if isinstance(obj, MinLangInstance):
+                obj.attrs[attr] = self.eval(val_node, env)
+            else:
+                raise RuntimeError(
+                    f"Cannot set attribute '{attr}' on non-struct value '{obj_name}'"
+                )
+
+        elif kind == 'ATTR_COMPOUND_ASSIGN':
+            # obj.attr += val  (and -=  *=  /=  %=)
+            _, obj_name, attr, op, val_node = node
+            obj = env.get(obj_name)
+            if not isinstance(obj, MinLangInstance):
+                raise RuntimeError(
+                    f"Cannot set attribute '{attr}' on non-struct value '{obj_name}'"
+                )
+            current = obj.attrs.get(attr)
+            if current is None:
+                raise RuntimeError(
+                    f"Attribute '{attr}' not set on '{obj.klass.name}' — cannot compound-assign"
+                )
+            delta = self.eval(val_node, env)
+            ops = {'+': lambda a, b: a + b, '-': lambda a, b: a - b,
+                   '*': lambda a, b: a * b, '/': lambda a, b: a / b,
+                    '%': lambda a, b: a % b}
+            obj.attrs[attr] = ops[op](current, delta)
 
         elif kind == 'PRINT':
             _, val_node, newline = node
@@ -962,6 +1149,15 @@ class Interpreter:
             _, name, params, body, variadic = node
             env.set(name, Function(name, params, body, env, variadic))
 
+        elif kind == 'STRUCTDEF':
+            # Build Function objects for each method, closing over current env
+            _, name, method_defs = node
+            methods = {
+                mname: Function(mname, params, body, env, variadic)
+                for mname, (params, body, variadic) in method_defs.items()
+            }
+            env.set(name, MinLangClass(name, methods))
+
         elif kind == 'RETURN':
             raise ReturnException(self.eval(node[1], env))
 
@@ -972,19 +1168,17 @@ class Interpreter:
             raise ContinueException()
 
         elif kind == 'TRY':
-            # try { body } catch errVar { handler }
             _, body, err_var, handler = node
             try:
                 self.exec_block(body, Environment(env))
             except (ReturnException, BreakException, ContinueException):
-                raise   # control-flow exceptions must NOT be caught
-            except Exception as e:
+                raise
+            except Exception as exc:
                 handler_env = Environment(env)
-                handler_env.set(err_var, str(e))
+                handler_env.set(err_var, str(exc))
                 self.exec_block(handler, handler_env)
 
         elif kind == 'USE':
-            # use "file.ll"  — execute file in the CURRENT scope
             _, path_node = node
             path = self.eval(path_node, env)
             try:
@@ -995,7 +1189,6 @@ class Interpreter:
             self.exec_block(ast, env)
 
         elif kind == 'DESTRUCT_LIST':
-            # L [a, b, *rest] = expr
             _, names, rest_name, val_node = node
             lst = self.eval(val_node, env)
             for i, name in enumerate(names):
@@ -1004,7 +1197,6 @@ class Interpreter:
                 env.set(rest_name, list(lst[len(names):]))
 
         elif kind == 'DESTRUCT_DICT':
-            # L {a, b} = expr  →  a = dct["a"],  b = dct["b"]
             _, names, val_node = node
             dct = self.eval(val_node, env)
             for name in names:
@@ -1029,7 +1221,6 @@ class Interpreter:
         if kind == 'NIL':    return None
 
         if kind == 'FSTRING':
-            # Interpolate {expr} inside the template string
             def replace_expr(m):
                 val = self.eval(Parser(tokenize(m.group(1))).parse_expr(), env)
                 return self.to_str(val)
@@ -1039,7 +1230,6 @@ class Interpreter:
             return env.get(node[1])
 
         if kind == 'LAMBDA':
-            # Anonymous function: fn(params) { body }
             _, params, body, variadic = node
             return Function('<lambda>', params, body, env, variadic)
 
@@ -1081,7 +1271,7 @@ class Interpreter:
             if op == '-': return -v
             if op == '!': return not v
 
-        # ── Function call ─────────────────────────────────────────
+        # ── Function / constructor call ───────────────────────────
         if kind == 'CALL':
             _, fn_node, arg_nodes = node
             fn   = self.eval(fn_node, env)
@@ -1121,6 +1311,15 @@ class Interpreter:
         if kind == 'ATTR':
             _, obj_node, attr = node
             obj = self.eval(obj_node, env)
+            if isinstance(obj, MinLangInstance):
+                if attr in obj.attrs:
+                    return obj.attrs[attr]
+                # Also allow reading methods as first-class values
+                if attr in obj.klass.methods:
+                    return obj.klass.methods[attr]
+                raise AttributeError(
+                    f"'{obj.klass.name}' instance has no attribute '{attr}'"
+                )
             if attr == 'len': return len(obj)
             return getattr(obj, attr)
 
@@ -1130,6 +1329,8 @@ class Interpreter:
             obj = self.eval(obj_node, env)
             if obj is None:
                 return None
+            if isinstance(obj, MinLangInstance):
+                return obj.attrs.get(attr)
             if attr == 'len': return len(obj)
             return getattr(obj, attr)
 
@@ -1137,6 +1338,15 @@ class Interpreter:
 
     def _dispatch_method(self, obj, method, args):
         """Central method dispatch — shared by METHOD and SAFE_METHOD."""
+
+        # ── Struct instance methods ─────────────────────────────
+        if isinstance(obj, MinLangInstance):
+            m = obj.klass.methods.get(method)
+            if m is None:
+                raise AttributeError(
+                    f"'{obj.klass.name}' has no method '{method}'"
+                )
+            return self._call_method(obj, m, args)
 
         # ── String methods ──────────────────────────────────────
         if method == 'up':         return obj.upper()
@@ -1183,13 +1393,23 @@ class Interpreter:
         if val is None:  return "nil"
         if val is True:  return "T"
         if val is False: return "F"
+        if isinstance(val, MinLangClass):
+            return f"<class {val.name}>"
+        if isinstance(val, MinLangInstance):
+            # Call 'str' method if defined, otherwise format attrs
+            m = val.klass.methods.get('str')
+            if m:
+                result = self._call_method(val, m, [])
+                return self.to_str(result)
+            attrs = ', '.join(
+                f"{k}: {self.to_str(v)}" for k, v in val.attrs.items()
+            )
+            return f"{val.klass.name}({{{attrs}}})"
         if isinstance(val, float):
             if math.isnan(val):  return "nan"
             if math.isinf(val):  return "inf" if val > 0 else "-inf"
-            # Whole-number floats: 3.0→"3", 1000000.0→"1000000"
             if val == int(val) and abs(val) < 1e15:
                 return str(int(val))
-            # Strip trailing zeros: 3.140000 → "3.14"
             s = repr(val)
             if "." in s and "e" not in s and "E" not in s:
                 s = s.rstrip("0").rstrip(".")
@@ -1207,7 +1427,11 @@ class Interpreter:
 # ═══════════════════════════════════════════════════════════════
 
 def run_code(source, interp=None):
-    """Compile and execute a MinLang source string."""
+    """
+    Compile and execute a MinLang source string.
+    Both syntax errors (from the parser) and runtime errors
+    (from the interpreter) now include a source line number.
+    """
     if interp is None:
         interp = Interpreter()
     try:
@@ -1216,13 +1440,20 @@ def run_code(source, interp=None):
         interp.run(ast)
     except (SyntaxError, NameError, TypeError, AttributeError,
             RuntimeError, KeyError, IndexError, ZeroDivisionError) as e:
-        print(f"[Error] {e}", file=sys.stderr)
+        msg = str(e)
+        # Syntax errors embed their own [line N] prefix from the parser/tokenizer.
+        # For runtime errors, prefix with the interpreter's line tracker.
+        if not msg.startswith('[line'):
+            line = interp._current_line
+            prefix = f"[line {line}] " if line is not None else ""
+            msg = prefix + msg
+        print(f"[Error] {msg}", file=sys.stderr)
     return interp
 
 
 def repl():
     """Interactive REPL with multi-line block support."""
-    print("MinLang REPL v1.1  |  'q' to quit  |  'help' for reference")
+    print("MinLang REPL v1.2  |  'q' to quit  |  'help' for reference")
     print("─" * 56)
     interp = Interpreter()
     buf    = []
@@ -1246,7 +1477,7 @@ def repl():
             src = '\n'.join(buf)
 
             if src.count('{') > src.count('}'):
-                continue   # block not closed yet
+                continue
 
             run_code(src, interp)
             buf = []
@@ -1262,12 +1493,12 @@ def repl():
 def print_help():
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║              MinLang v1.1  —  Quick Reference            ║
+║              MinLang v1.2  —  Quick Reference            ║
 ╠══════════════════════════════════════════════════════════╣
 ║  VARIABLES                                               ║
 ║   L x = 5              declare                           ║
 ║   x = 10               reassign                          ║
-║   x += 1               compound  (+=  -=  *=  /=  %=)   ║
+║   x += 1               compound  (+=  -=  *=  /=  %=)    ║
 ║   L [a,b,*r] = lst     list destructure  (*r = rest)     ║
 ║   L {x,y} = dct        dict destructure                  ║
 ║                                                          ║
@@ -1278,14 +1509,14 @@ def print_help():
 ║   inp "Prompt: " x     read with prompt                  ║
 ║                                                          ║
 ║  STRINGS                                                 ║
-║   \"""...\"""           multiline string                  ║
+║   \"""...\"""           multiline string                 ║
 ║   s[1:4]               slice  (also s[:4]  s[2:])        ║
 ║   s.up()  s.lo()  s.trim()  s.split(",")                 ║
-║   s.replace(a,b)  s.find(x)  s.has(x)                   ║
+║   s.replace(a,b)  s.find(x)  s.has(x)                    ║
 ║   s.startsWith(x)  s.endsWith(x)                         ║
 ║                                                          ║
 ║  CONDITIONS                                              ║
-║   if x > 5 { }  elif x == 5 { }  el { }                 ║
+║   if x > 5 { }  elif x == 5 { }  el { }                  ║
 ║   cond ? a : b         ternary expression                ║
 ║                                                          ║
 ║  LOOPS                                                   ║
@@ -1297,11 +1528,30 @@ def print_help():
 ║   fn add(a, b) { rt a + b }                              ║
 ║   fn greet(*names) { lp n in names { ptl n } }           ║
 ║                                                          ║
+║  STRUCTS  (OOP)                                          ║
+║   struct Dog {                                           ║
+║     fn init(name, age) {                                 ║
+║       self.name = name                                   ║
+║       self.age  = age                                    ║
+║     }                                                    ║
+║     fn bark() {                                          ║
+║       ptl f"Woof! I'm {self.name}"                       ║
+║     }                                                    ║
+║     fn str() { rt f"Dog({self.name})" }                  ║
+║   }                                                      ║
+║   L d = Dog("Rex", 3)  ## construct                      ║
+║   d.bark()             ## call method                    ║
+║   ptl d.name           ## read attribute                 ║
+║   d.name = "Max"       ## write attribute                ║
+║   instanceof(d, Dog)   ## T                              ║
+║   className(d)         ## "Dog"                          ║
+║   isObj(d)             ## T                              ║
+║                                                          ║
 ║  ERROR HANDLING                                          ║
 ║   try { risky() } catch e { ptl e }                      ║
 ║                                                          ║
 ║  MODULES                                                 ║
-║   use "utils.ll"       run file in current scope         ║
+║   use "utils.minl"       run file in current scope       ║
 ║                                                          ║
 ║  NIL-SAFE ACCESS                                         ║
 ║   obj?.method()        nil if obj is nil                 ║
@@ -1317,13 +1567,14 @@ def print_help():
 ║   d.merge(other)                                         ║
 ║                                                          ║
 ║  BUILT-INS                                               ║
-║   len sqrt abs pow rnd max min sum log sin cos tan        ║
+║   len sqrt abs pow rnd max min sum log sin cos tan       ║
 ║   rng push pop sort rev map flt2 red flat uniq zip2      ║
 ║   up lo trim split join find replace fmt                 ║
 ║   int flt str canInt canFlt toInt toFlt                  ║
 ║   now clock date sleep rand randInt pick shuffle         ║
 ║   keys values items hasKey delKey merge                  ║
 ║   read write append exists exit                          ║
+║   instanceof className isObj                             ║
 ╚══════════════════════════════════════════════════════════╝
 """)
 

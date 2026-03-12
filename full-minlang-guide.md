@@ -24,9 +24,12 @@
 11. [Organising code — functions](#11-organising-code--functions)
 12. [Lists — keeping many values together](#12-lists--keeping-many-values-together)
 13. [Dictionaries — labelled boxes](#13-dictionaries--labelled-boxes)
-14. [Built-in tools — the standard library](#14-built-in-tools--the-standard-library)
-15. [Putting it all together — full projects](#15-putting-it-all-together--full-projects)
-16. [New in v1.1 — what was added](#16-new-in-v11--what-was-added)
+14. [Error handling — try / catch](#14-error-handling--try--catch)
+15. [Structs — grouping data and behaviour together](#15-structs--grouping-data-and-behaviour-together)
+16. [Modules — splitting code across files](#16-modules--splitting-code-across-files)
+17. [Built-in tools — the standard library](#17-built-in-tools--the-standard-library)
+18. [Putting it all together — full projects](#18-putting-it-all-together--full-projects)
+19. [Quick Reference Card](#19-quick-reference-card)
 
 ---
 
@@ -84,13 +87,24 @@ python3 minlang.py
 You get an interactive prompt that looks like this:
 
 ```
-MinLang REPL v1.1  |  'q' to quit  |  'help' for reference
+MinLang REPL v1.2  |  'q' to quit  |  'help' for reference
 ────────────────────────────────────────────────────────
 >>>
 ```
 
 You can type one line at a time and see the result immediately.
 This is great for experimenting. Type `q` and press Enter to quit.
+
+### Reading error messages
+
+When something goes wrong, MinLang tells you exactly where the problem is:
+
+```
+[Error] [line 7] Variable 'scroe' is not defined
+```
+
+The `[line 7]` part is the line number in your source file where the error happened.
+Open your file, go to that line, and that's where you need to look.
 
 ---
 
@@ -222,6 +236,36 @@ ptl score    ## prints 100
 The `L` is only used the **first time** you create a variable.
 After that, you just use the name.
 
+### Compound assignment — updating a variable in one step
+
+A very common pattern is updating a variable based on its current value:
+
+```
+score = score + 10
+```
+
+MinLang provides a shorter form for all five arithmetic operations:
+
+| Write | Means |
+|---|---|
+| `x += n` | `x = x + n` |
+| `x -= n` | `x = x - n` |
+| `x *= n` | `x = x * n` |
+| `x /= n` | `x = x / n` |
+| `x %= n` | `x = x % n` |
+
+So instead of `i = i + 1` in a loop counter, you write:
+
+```
+L i = 0
+wh i < 10 {
+    ptl i
+    i += 1
+}
+```
+
+This works anywhere you would write the long form — loops, scores, totals, anything.
+
 ### Why can't I just use `=` without `L` the first time?
 
 If you forget the `L`, MinLang will warn you:
@@ -253,6 +297,42 @@ Bad names (will cause errors):
 L 2item = "sword"    ## starts with a number — not allowed
 L if = 5             ## 'if' is a reserved keyword — not allowed
 ```
+
+### Unpacking — assigning multiple variables at once
+
+When you have a list and want its values in separate variables,
+you can unpack them all in one line using `L [...]`:
+
+```
+## Old way — three separate lines
+L coords = [10, 20, 30]
+L x = coords[0]
+L y = coords[1]
+L z = coords[2]
+
+## New way — one line
+L [x, y, z] = [10, 20, 30]
+```
+
+The `*name` syntax collects all remaining elements into a sub-list:
+
+```
+L [first, *rest] = [1, 2, 3, 4, 5]
+ptl first    ## 1
+ptl rest     ## [2, 3, 4, 5]
+```
+
+You can also unpack a dictionary by key name:
+
+```
+L user = {"name": "Alice", "score": 99, "level": 7}
+L {name, score, level} = user
+
+ptl f"{name} is level {level} with {score} points."
+```
+
+This is exactly equivalent to `L name = user["name"]` etc., just shorter.
+The variable names must match the dictionary keys exactly.
 
 ---
 
@@ -300,15 +380,33 @@ if n % 2 == 0 {
 }
 ```
 
+### The power operator `**`
+
+`**` raises a number to a power. `2 ** 10` means 2 multiplied by itself 10 times:
+
+```
+ptl 2 ** 10    ## 1024
+ptl 3 ** 3     ## 27
+ptl 9 ** 0.5   ## 3.0  (square root via fractional exponent)
+```
+
+`**` is **right-associative**, meaning `2 ** 3 ** 2` is evaluated as
+`2 ** (3 ** 2)` = `2 ** 9` = `512`, not `(2 ** 3) ** 2` = `64`.
+
+The `pow(a, b)` built-in function does exactly the same thing — `**` is just shorter.
+
 ### Order of operations
 
-MinLang follows the same rules as maths:
-`*` and `/` happen before `+` and `-`.
+MinLang follows the same rules as maths.
+From highest priority to lowest: `**` → `*`, `/`, `%` → `+`, `-`
+
 Use parentheses `()` to change the order:
 
 ```
-ptl 2 + 3 * 4     ## 14  (3*4 first, then +2)
-ptl (2 + 3) * 4   ## 20  (2+3 first, then *4)
+ptl 2 + 3 * 4       ## 14  (3*4 first, then +2)
+ptl (2 + 3) * 4     ## 20  (2+3 first, then *4)
+ptl 2 ** 3 + 1      ## 9   (2**3=8 first, then +1)
+ptl 2 ** (3 + 1)    ## 16  (3+1=4 first, then 2**4)
 ```
 
 ### Math built-in functions
@@ -317,14 +415,14 @@ MinLang comes with ready-made math tools.
 A **function** is something you call by name with values in parentheses:
 
 ```
-ptl sqrt(16)       ## 4.0  — square root
-ptl abs(-7)        ## 7    — absolute value (removes the minus sign)
-ptl pow(2, 10)     ## 1024 — 2 to the power of 10
-ptl floor(3.9)     ## 3    — round DOWN to nearest whole number
-ptl ceil(3.1)      ## 4    — round UP to nearest whole number
+ptl sqrt(16)        ## 4    — square root
+ptl abs(-7)         ## 7    — absolute value (removes the minus sign)
+ptl pow(2, 10)      ## 1024 — same as 2 ** 10
+ptl floor(3.9)      ## 3    — round DOWN to nearest whole number
+ptl ceil(3.1)       ## 4    — round UP to nearest whole number
 ptl rnd(3.14159, 2) ## 3.14 — round to 2 decimal places
-ptl max(5, 3, 8)   ## 8    — the largest value
-ptl min(5, 3, 8)   ## 3    — the smallest value
+ptl max(5, 3, 8)    ## 8    — the largest value
+ptl min(5, 3, 8)    ## 3    — the smallest value
 ```
 
 The constant `pi` is available without calling a function:
@@ -341,6 +439,24 @@ L s = str(100)      ## turns the number 100 into the text "100"
 ```
 
 This is important when working with user input — more on that in Section 8.
+
+### How floats are displayed
+
+Whole-number floats display without the trailing `.0`, and unnecessary trailing
+zeros are stripped:
+
+```
+ptl 3.0        ## 3       (not "3.0")
+ptl 1000000.0  ## 1000000 (not "1000000.0")
+ptl 3.14       ## 3.14
+```
+
+Use `fmt` when you need precise formatting:
+```
+ptl fmt(pi, ".2f")    ## "3.14"
+ptl fmt(pi, ".4f")    ## "3.1416"
+ptl fmt(9.9, ".0f")   ## "10"
+```
 
 ---
 
@@ -383,6 +499,38 @@ Output:
 Name:    Alice
 ```
 
+### Multiline strings — `"""..."""`
+
+When your text spans several lines, triple-quoted strings preserve
+line breaks exactly as you write them:
+
+```
+L letter = """Dear Alice,
+
+Thank you for your message.
+We will respond shortly.
+
+Regards,
+The Team"""
+
+ptl letter
+```
+
+Output:
+```
+Dear Alice,
+
+Thank you for your message.
+We will respond shortly.
+
+Regards,
+The Team
+```
+
+Everything between the opening `"""` and closing `"""` is part of the string,
+including blank lines and indentation. Escape sequences like `\n` and `\t`
+still work inside them.
+
 ### F-strings — putting variables inside text
 
 An **f-string** lets you mix text and variable values in one line.
@@ -411,6 +559,22 @@ The sum of 5 and 3 is 8.
 
 This is one of the most useful features in the language — you'll use it constantly.
 
+### String slices — extracting a piece of text
+
+A **slice** extracts a portion of a string without modifying the original.
+Write `[start:stop]` — the result includes the character at `start` but
+stops **before** `stop`:
+
+```
+L word = "MinLang"
+
+ptl word[0:3]    ## "Min"   — characters 0, 1, 2
+ptl word[3:]     ## "Lang"  — from index 3 to the end
+ptl word[:3]     ## "Min"   — from the beginning up to index 3
+```
+
+Either bound can be omitted. A slice always returns a **new** string.
+
 ### String built-in functions
 
 ```
@@ -436,18 +600,18 @@ ptl endsWith(sentence, "fox")       ## T  — does it end with "fox"?
 ```
 L word = "hello"
 
-ptl sub(word, 1, 3)       ## "el"   — characters from position 1 up to (not including) 3
-ptl rep(word, 3)           ## "hellohellohello"  — repeat the string 3 times
-ptl replace(word, "l", "r")  ## "herro"  — replace all "l" with "r"
+ptl sub(word, 1, 3)          ## "el"            — characters from 1 up to (not including) 3
+ptl rep(word, 3)              ## "hellohellohello" — repeat the string 3 times
+ptl replace(word, "l", "r")  ## "herro"         — replace all "l" with "r"
 ```
 
 ```
 ## Splitting and joining
 L csv = "apple,banana,cherry"
-L parts = split(csv, ",")     ## ["apple", "banana", "cherry"]
+L parts = split(csv, ",")       ## ["apple", "banana", "cherry"]
 ptl parts
 
-L rejoined = join(parts, " | ")   ## "apple | banana | cherry"
+L rejoined = join(parts, " | ")  ## "apple | banana | cherry"
 ptl rejoined
 ```
 
@@ -490,9 +654,9 @@ ptl 5 < 3 || 10 < 7    ## F  (both are false)
 
 `!` means **NOT** — flips true to false and vice versa:
 ```
-ptl !T     ## F
-ptl !F     ## T
-ptl !(5 > 3)   ## F  (5>3 is true, !true is false)
+ptl !T          ## F
+ptl !F          ## T
+ptl !(5 > 3)    ## F  (5>3 is true, !true is false)
 ```
 
 ### `nil` — the absence of a value
@@ -510,6 +674,33 @@ You can check for nil:
 if result == nil {
     ptl "conversion failed"
 }
+```
+
+### Nil-safe access — `?.`
+
+When a value might be `nil`, calling a method or reading an attribute on it
+would normally crash the program. The `?.` operator returns `nil` instead
+of crashing:
+
+```
+L result = toInt("abc")   ## result = nil
+
+## Old way — had to check manually:
+if result != nil {
+    ptl len(str(result))
+}
+
+## New way — one character does it:
+ptl result?.len()    ## nil — no crash, no if needed
+```
+
+This works for method calls (`?.method()`) and attribute reads (`?.attr`).
+It's most useful in chains where an earlier step might produce `nil`:
+
+```
+L user = nil
+ptl user?.name          ## nil — no crash
+ptl user?.score         ## nil — the whole chain short-circuits
 ```
 
 ---
@@ -671,6 +862,40 @@ if is_member || has_coupon {
 }
 ```
 
+### Ternary expression — `cond ? a : b`
+
+A ternary expression is a compact `if/el` that produces a **value** rather
+than running a block. It's useful when you want to choose between two values
+on one line:
+
+```
+L label = score >= 60 ? "pass" : "fail"
+```
+
+Read it as: "if `score >= 60` then `"pass"`, otherwise `"fail"`."
+
+Without the ternary, the same logic takes five lines:
+
+```
+L label = ""
+if score >= 60 {
+    label = "pass"
+} el {
+    label = "fail"
+}
+```
+
+You can use a ternary anywhere an expression is allowed — inside an
+f-string, as a function argument, as part of a larger expression:
+
+```
+ptl f"Result: {score >= 60 ? "pass" : "fail"}"
+ptl age >= 18 ? "adult" : "minor"
+```
+
+Keep ternaries simple. If the condition or either branch is complicated,
+a full `if/el` block is easier to read.
+
 ---
 
 ## 10. Repeating things — loops
@@ -687,7 +912,7 @@ L count = 1
 
 wh count <= 5 {
     ptl count
-    count = count + 1
+    count += 1
 }
 ```
 
@@ -739,10 +964,10 @@ That's standard in programming — counting usually starts at 0.
 ### `rng` variations
 
 ```
-rng(5)        ## [0, 1, 2, 3, 4]         — from 0 to 4
-rng(1, 6)     ## [1, 2, 3, 4, 5]         — from 1 to 5
-rng(0, 10, 2) ## [0, 2, 4, 6, 8]         — from 0 to 8, step of 2
-rng(10, 0, -1)## [10, 9, 8, 7, ..., 1]   — counting down
+rng(5)         ## [0, 1, 2, 3, 4]         — from 0 to 4
+rng(1, 6)      ## [1, 2, 3, 4, 5]         — from 1 to 5
+rng(0, 10, 2)  ## [0, 2, 4, 6, 8]         — from 0 to 8, step of 2
+rng(10, 0, -1) ## [10, 9, 8, 7, ..., 1]   — counting down
 ```
 
 ### Looping over a list
@@ -974,6 +1199,77 @@ ptl myFn(5)         ## 10 — call it through the variable
 
 This becomes very useful with list operations (see Section 12).
 
+### Variadic functions — accepting any number of arguments
+
+A **variadic function** accepts any number of arguments. Add `*name` as the
+last parameter and it will collect all extra arguments into a list:
+
+```
+fn greetAll(*names) {
+    lp name in names {
+        ptl f"Hello, {name}!"
+    }
+}
+
+greetAll("Alice", "Bob", "Charlie")
+```
+
+Output:
+```
+Hello, Alice!
+Hello, Bob!
+Hello, Charlie!
+```
+
+You can mix regular parameters with `*args` — regular ones come first:
+
+```
+fn log(level, *messages) {
+    lp msg in messages {
+        ptl f"[{level}] {msg}"
+    }
+}
+
+log("INFO", "Server started", "Listening on port 8080")
+```
+
+Output:
+```
+[INFO] Server started
+[INFO] Listening on port 8080
+```
+
+### Anonymous functions — `fn(x) { rt expr }`
+
+`fn` can appear inside an expression, not just as a statement. This is useful
+when passing a simple transformation to `map` or `flt2` without needing to
+define a separate named function:
+
+```
+## Named function — requires a definition far from where it's used
+fn isPositive(x) { rt x > 0 }
+L positives = flt2(numbers, isPositive)
+
+## Anonymous function — written right where it's needed
+L positives = flt2(numbers, fn(x) { rt x > 0 })
+```
+
+Anonymous functions are full closures — they capture variables from the
+surrounding scope just like named functions do:
+
+```
+L threshold = 5
+L big = flt2([1, 3, 7, 2, 9], fn(x) { rt x > threshold })
+ptl big    ## [7, 9]
+```
+
+You can also store an anonymous function in a variable and call it later:
+
+```
+L square = fn(x) { rt x * x }
+ptl square(7)    ## 49
+```
+
 ### Variable scope — what lives where
 
 Variables declared inside a function **do not exist outside** it:
@@ -990,6 +1286,30 @@ ptl secret    ## ERROR: 'secret' is not defined
 
 This is called **scope** and it's a feature, not a bug. It means functions
 can use whatever variable names they like without interfering with each other.
+
+### Closures — functions that remember their surroundings
+
+A function defined inside another function **remembers** the variables from
+the outer scope even after the outer function has finished:
+
+```
+fn makeCounter() {
+    L c = 0
+    fn inc() {
+        c += 1
+        rt c
+    }
+    rt inc
+}
+
+L counter = makeCounter()
+ptl counter()    ## 1
+ptl counter()    ## 2
+ptl counter()    ## 3
+```
+
+Each call to `counter()` increments the same `c` that was created inside
+`makeCounter`. This is a **closure** — `inc` closed over the variable `c`.
 
 ---
 
@@ -1029,6 +1349,21 @@ L fruits = ["apple", "banana", "cherry"]
 fruits[1] = "mango"
 ptl fruits    ## [apple, mango, cherry]
 ```
+
+### Slices — extracting a portion of a list
+
+A **slice** extracts a range of elements without modifying the original list.
+Write `[start:stop]` — the result includes `start` but stops **before** `stop`:
+
+```
+L nums = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+ptl nums[2:5]    ## [2, 3, 4]   — indices 2, 3, 4
+ptl nums[:3]     ## [0, 1, 2]   — from the beginning up to index 3
+ptl nums[7:]     ## [7, 8, 9]   — from index 7 to the end
+```
+
+Either bound can be omitted. A slice always returns a **new** list.
 
 ### List length
 
@@ -1098,10 +1433,8 @@ These are powerful tools for working with lists without writing explicit loops.
 `map(list, function)` applies a function to every element and returns a new list:
 
 ```
-fn double(x) { rt x * 2 }
-
-L nums   = [1, 2, 3, 4, 5]
-L doubled = map(nums, double)
+L nums    = [1, 2, 3, 4, 5]
+L doubled = map(nums, fn(x) { rt x * 2 })
 ptl doubled    ## [2, 4, 6, 8, 10]
 ```
 
@@ -1110,10 +1443,8 @@ ptl doubled    ## [2, 4, 6, 8, 10]
 `flt2(list, function)` keeps only elements where the function returns `T`:
 
 ```
-fn isEven(x) { rt x % 2 == 0 }
-
 L nums  = [1, 2, 3, 4, 5, 6]
-L evens = flt2(nums, isEven)
+L evens = flt2(nums, fn(x) { rt x % 2 == 0 })
 ptl evens    ## [2, 4, 6]
 ```
 
@@ -1123,10 +1454,8 @@ ptl evens    ## [2, 4, 6]
 accumulating a single result. "red" is short for "reduce":
 
 ```
-fn add(a, b) { rt a + b }
-
 L nums  = [1, 2, 3, 4, 5]
-L total = red(nums, add, 0)
+L total = red(nums, fn(a, b) { rt a + b }, 0)
 ptl total    ## 15  (0+1+2+3+4+5)
 ```
 
@@ -1199,6 +1528,67 @@ config["font_size"] = 14
 ptl config    ## {theme: dark, language: english, font_size: 14}
 ```
 
+### Dict methods — operations you can call directly on a dictionary
+
+Dictionaries have methods you can call with the dot `.` syntax,
+making common operations more natural.
+
+**Iterating over a dictionary:**
+
+```
+L prices = {"apple": 1.2, "banana": 0.5, "cherry": 2.0}
+
+lp pair in prices.items() {
+    ptl f"{pair[0]}: £{pair[1]}"
+}
+```
+
+Output:
+```
+apple: £1.2
+banana: £0.5
+cherry: £2.0
+```
+
+**Getting all keys or all values:**
+
+```
+ptl prices.keys()      ## [apple, banana, cherry]
+ptl prices.values()    ## [1.2, 0.5, 2.0]
+```
+
+**Safe lookup with a default:**
+
+```
+L price = prices.get("mango", 0.0)
+ptl price    ## 0.0 — "mango" wasn't in the dict, so the default was returned
+```
+
+Without `.get()`, accessing a missing key crashes. With `.get()` you can
+safely provide a fallback value.
+
+**Checking, deleting, and merging:**
+
+```
+ptl prices.has("apple")         ## T — does the key exist?
+prices.del("banana")            ## remove a key
+L updated = prices.merge({"grape": 1.8})  ## combine two dicts into a new one
+```
+
+### Unpacking a dictionary into variables
+
+You can pull dictionary values into named variables using `L {key, key} = dict`:
+
+```
+L user = {"name": "Alice", "score": 99, "level": 7}
+L {name, score, level} = user
+
+ptl f"{name} is level {level} with {score} points."
+```
+
+This is exactly equivalent to writing `L name = user["name"]` etc., but in one line.
+The variable names must match the dictionary keys exactly.
+
 ### A practical example
 
 ```
@@ -1208,6 +1598,11 @@ ptl scores["Alice"]    ## 95
 
 scores["Diana"] = 88
 ptl scores["Diana"]    ## 88
+
+## Print everyone in order
+lp pair in scores.items() {
+    ptl f"{pair[0]}: {pair[1]}"
+}
 ```
 
 ### Dictionaries with lists as values
@@ -1225,7 +1620,381 @@ ptl student["grades"][0]   ## 90  — first grade
 
 ---
 
-## 14. Built-in tools — the standard library
+## 14. Error handling — `try` / `catch`
+
+Some operations can fail at runtime — converting bad input, dividing by zero,
+accessing a variable that doesn't exist. Without error handling, any of these
+crashes the whole program. `try/catch` lets you handle the failure gracefully.
+
+### Basic syntax
+
+```
+try {
+    L n = int("hello")    ## this will fail
+    ptl f"Got: {n}"
+} catch e {
+    ptl f"Something went wrong: {e}"
+}
+```
+
+The code inside `try { }` runs normally. If **any** error occurs, execution
+jumps immediately to `catch`, and the variable after `catch` (here `e`) is
+set to the error message as a string. Code after the failing line inside `try`
+is skipped.
+
+### Practical use — validating user input without crashing
+
+```
+inp "Enter a number: " raw
+
+try {
+    L n = int(raw)
+    ptl f"Doubled: {n * 2}"
+} catch e {
+    ptl "That was not a valid number."
+}
+```
+
+### Catching specific failure types
+
+You can put any code inside `try` — the `catch` block handles whatever goes wrong:
+
+```
+L caught_div = "no"
+try {
+    ptl 1 / 0
+} catch e {
+    caught_div = "yes"
+}
+ptl caught_div    ## "yes"
+
+L caught_missing = "no"
+try {
+    ptl undeclaredVariable
+} catch e {
+    caught_missing = "yes"
+}
+ptl caught_missing    ## "yes"
+```
+
+### What `try/catch` does NOT catch
+
+`try/catch` only catches genuine runtime errors. The control-flow keywords
+`rt` (return), `brk` (break), and `cnt` (continue) are not errors —
+they pass through `try` blocks completely unaffected:
+
+```
+fn example() {
+    try {
+        rt 42    ## this works fine — rt passes through
+    } catch e {
+        ptl "never reaches here"
+    }
+}
+ptl example()    ## 42
+```
+
+---
+
+## 15. Structs — grouping data and behaviour together
+
+Until now, data and functions have been separate — you have variables holding
+values, and standalone functions that process them. **Structs** let you bundle
+both into a single named type. A struct defines what data an object holds
+and what operations it can perform.
+
+This is the foundation of **object-oriented programming** (OOP): instead of
+asking "what data do I have and what functions manipulate it?", you ask
+"what kind of *thing* is this, and what can it *do*?"
+
+### Defining a struct
+
+Use the `struct` keyword, followed by the name and a block of method definitions.
+A method is just a function defined inside the struct:
+
+```
+struct Dog {
+    fn init(name, age) {
+        self.name = name
+        self.age  = age
+    }
+
+    fn bark() {
+        ptl f"Woof! I am {self.name}."
+    }
+}
+```
+
+There are two things to notice:
+- `init` is the **constructor** — it runs automatically whenever you create a new Dog.
+- `self` refers to **this specific instance** of the struct. `self.name` stores the name
+  on the object itself, so each Dog can have its own name.
+
+### Creating an instance
+
+To create a Dog, call the struct name like a function:
+
+```
+L d = Dog("Rex", 3)
+```
+
+This calls `init` with `name = "Rex"` and `age = 3`. The result is stored in `d`.
+
+Note that `self` is **not** in the parameter list — it is injected automatically.
+You never pass `self` when calling a method.
+
+### Accessing attributes
+
+Read any value that was stored with `self.something`:
+
+```
+ptl d.name    ## Rex
+ptl d.age     ## 3
+```
+
+### Calling methods
+
+Call a method on an instance using the dot `.` syntax:
+
+```
+d.bark()    ## Woof! I am Rex.
+```
+
+### Changing attributes
+
+You can change an attribute from outside the struct:
+
+```
+d.name = "Max"
+ptl d.name    ## Max
+```
+
+Or from inside a method using `self`:
+
+```
+struct Counter {
+    fn init(start) {
+        self.val = start
+    }
+    fn inc() {
+        self.val += 1
+    }
+    fn get() {
+        rt self.val
+    }
+}
+
+L c = Counter(0)
+c.inc()
+c.inc()
+c.inc()
+ptl c.get()    ## 3
+```
+
+Compound assignment (`+=`, `-=`, `*=`, etc.) works on `self` attributes too,
+as shown above with `self.val += 1`.
+
+### Methods with parameters and return values
+
+Methods work exactly like regular functions — they can take arguments and
+return values with `rt`:
+
+```
+struct Rectangle {
+    fn init(width, height) {
+        self.width  = width
+        self.height = height
+    }
+
+    fn area() {
+        rt self.width * self.height
+    }
+
+    fn scale(factor) {
+        self.width  *= factor
+        self.height *= factor
+    }
+
+    fn describe() {
+        rt f"Rectangle({self.width} x {self.height})"
+    }
+}
+
+L r = Rectangle(4, 5)
+ptl r.area()        ## 20
+r.scale(2)
+ptl r.describe()    ## Rectangle(8 x 10)
+```
+
+### The `str` method — custom display
+
+If you define a method called `str`, it is used whenever the instance is
+converted to text — including inside f-strings and when you call `str(obj)`:
+
+```
+struct Point {
+    fn init(x, y) {
+        self.x = x
+        self.y = y
+    }
+    fn str() {
+        rt f"Point({self.x}, {self.y})"
+    }
+}
+
+L p = Point(3, 4)
+ptl str(p)           ## Point(3, 4)
+ptl f"Location: {str(p)}"   ## Location: Point(3, 4)
+```
+
+### Checking the type of an object
+
+Three built-in functions let you inspect instances:
+
+```
+L d = Dog("Rex", 3)
+
+ptl isObj(d)              ## T — is it a struct instance?
+ptl className(d)          ## "Dog" — what struct was it made from?
+ptl instanceof(d, Dog)    ## T — is it specifically a Dog?
+```
+
+`instanceof` returns `F` if you check against a different struct:
+
+```
+struct Cat {
+    fn init(name) { self.name = name }
+}
+
+L c = Cat("Whiskers")
+ptl instanceof(c, Dog)    ## F — c is a Cat, not a Dog
+ptl instanceof(c, Cat)    ## T
+```
+
+### Structs as values — using instances in lists and with functions
+
+Instances are regular values. You can store them in lists, pass them to
+functions, use them with `map` and `flt2`:
+
+```
+struct Item {
+    fn init(name, price) {
+        self.name  = name
+        self.price = price
+    }
+}
+
+L cart = [Item("apple", 1), Item("banana", 2), Item("cherry", 5)]
+
+## Loop over all items
+lp item in cart {
+    ptl f"{item.name}: £{item.price}"
+}
+
+## Total price
+L total = red(cart, fn(acc, item) { rt acc + item.price }, 0)
+ptl f"Total: £{total}"    ## Total: £8
+
+## Only cheap items
+L cheap = flt2(cart, fn(item) { rt item.price < 3 })
+ptl len(cheap)    ## 2
+```
+
+### Nil-safe access on instances
+
+The `?.` operator works on struct instances too:
+
+```
+L d = Dog("Rex", 3)
+L maybe = nil
+
+ptl d?.name      ## Rex
+ptl maybe?.name  ## nil — no crash
+```
+
+### A complete example
+
+```
+struct BankAccount {
+    fn init(owner, balance) {
+        self.owner   = owner
+        self.balance = balance
+    }
+
+    fn deposit(amount) {
+        self.balance += amount
+        ptl f"Deposited £{amount}. New balance: £{self.balance}"
+    }
+
+    fn withdraw(amount) {
+        if amount > self.balance {
+            ptl "Insufficient funds."
+            rt F
+        }
+        self.balance -= amount
+        ptl f"Withdrew £{amount}. New balance: £{self.balance}"
+        rt T
+    }
+
+    fn str() {
+        rt f"Account({self.owner}, £{self.balance})"
+    }
+}
+
+L acc = BankAccount("Alice", 500)
+acc.deposit(200)      ## Deposited £200. New balance: £700
+acc.withdraw(100)     ## Withdrew £100. New balance: £600
+acc.withdraw(1000)    ## Insufficient funds.
+ptl str(acc)          ## Account(Alice, £600)
+```
+
+---
+
+## 16. Modules — splitting code across files
+
+`use` runs another `.minl` file and makes everything it defines available
+in the current program. This lets you split a large project across multiple files.
+
+### Basic usage
+
+**utils.minl:**
+```
+fn clamp(x, lo, hi) {
+    rt x < lo ? lo : (x > hi ? hi : x)
+}
+
+fn lerp(a, b, t) {
+    rt a + (b - a) * t
+}
+```
+
+**main.minl:**
+```
+use "utils.minl"
+
+ptl clamp(150, 0, 100)     ## 100
+ptl lerp(0, 100, 0.25)     ## 25
+```
+
+All functions and variables defined in the imported file become available
+immediately after the `use` line.
+
+### Why split into files?
+
+- Code stays shorter and easier to read
+- You can reuse the same utilities in multiple programs
+- Working on one part of the code doesn't require scrolling past unrelated code
+
+### Things to know
+
+- `use` executes the file in the **current scope** — no namespacing or import aliases
+- You can use as many `use` statements as you need
+- The file path is relative to where you run the interpreter from
+- Structs, functions, and variables all carry across
+
+---
+
+## 17. Built-in tools — the standard library
 
 MinLang comes with many ready-made functions.
 This section explains each group with examples.
@@ -1285,6 +2054,7 @@ ptl isLst(x)     ## F   — is it a list?
 ptl isDct(x)     ## F   — is it a dict?
 ptl isBool(x)    ## F   — is it T or F?
 ptl isNil(x)     ## F   — is it nil?
+ptl isObj(x)     ## F   — is it a struct instance?
 
 ptl type(x)      ## "int"   — returns the type name as text
 ```
@@ -1299,14 +2069,12 @@ fn describe(val) {
         ptl f"{val} is text"
     } elif isLst(val) {
         ptl f"a list with {len(val)} items"
+    } elif isObj(val) {
+        ptl f"a {className(val)} instance"
     } el {
         ptl f"something else: {type(val)}"
     }
 }
-
-describe(42)           ## 42 is a number
-describe("hello")      ## hello is text
-describe([1, 2, 3])    ## a list with 3 items
 ```
 
 ### File reading and writing
@@ -1321,6 +2089,11 @@ write("output.txt", "Hello from MinLang!")
 
 ## Append to a file (adds to the end without overwriting)
 append("log.txt", "\nNew line added")
+
+## Check if a file exists before reading
+if exists("config.txt") {
+    L cfg = read("config.txt")
+}
 ```
 
 ### System functions
@@ -1341,7 +2114,7 @@ exit(1)     ## any non-zero number means "something went wrong"
 
 ---
 
-## 15. Putting it all together — full projects
+## 18. Putting it all together — full projects
 
 Now let's combine everything into real programs.
 
@@ -1350,7 +2123,7 @@ Now let's combine everything into real programs.
 ```
 ## The computer picks a random number, the player guesses it.
 
-L secret = randInt(1, 100)
+L secret   = randInt(1, 100)
 L attempts = 0
 
 ptl "I am thinking of a number between 1 and 100."
@@ -1364,7 +2137,7 @@ wh T {
     }
 
     L guess = int(raw)
-    attempts = attempts + 1
+    attempts += 1
 
     if guess < secret {
         ptl "Too low! Try higher."
@@ -1415,7 +2188,6 @@ wh T {
             if num >= 0 && num < len(todos) {
                 L removed = todos[num]
                 todos[num] = nil
-                ## rebuild list without nil
                 L clean = flt2(todos, fn(x) { rt x != nil })
                 todos = clean
                 ptl f"Removed: {removed}"
@@ -1505,459 +2277,93 @@ ptl f"Encoded: {encoded}"
 ptl f"Decoded: {decoded}"
 ```
 
----
-
-## 16. New in v1.1 — what was added
-
-Version 1.1 added a set of features focused on writing less code to say
-the same thing. Nothing about the core language changed — variables, loops,
-functions, and data structures all work exactly as before. These are purely
-additional tools.
-
----
-
-### Compound assignment — updating a variable in one step
-
-Before v1.1, incrementing a counter looked like this:
+### Project 5 — Contact book (using structs)
 
 ```
-score = score + 10
-```
+## A contact book where each contact is a struct instance.
 
-Now you can write:
+struct Contact {
+    fn init(name, phone, email) {
+        self.name  = name
+        self.phone = phone
+        self.email = email
+    }
 
-```
-score += 10
-```
+    fn display() {
+        ptl f"  Name:  {self.name}"
+        ptl f"  Phone: {self.phone}"
+        ptl f"  Email: {self.email}"
+    }
 
-All five arithmetic operators have a compound form:
-
-| Write | Means |
-|---|---|
-| `x += n` | `x = x + n` |
-| `x -= n` | `x = x - n` |
-| `x *= n` | `x = x * n` |
-| `x /= n` | `x = x / n` |
-| `x %= n` | `x = x % n` |
-
-A typical loop counter in the old style:
-
-```
-L i = 0
-wh i < 10 {
-    ptl i
-    i = i + 1    ## old style
-}
-```
-
-Same loop with compound assignment:
-
-```
-L i = 0
-wh i < 10 {
-    ptl i
-    i += 1       ## new style
-}
-```
-
----
-
-### Power operator `**`
-
-`**` raises a number to a power. It is right-associative, meaning
-`2 ** 3 ** 2` is evaluated as `2 ** (3 ** 2)` = `2 ** 9` = `512`.
-
-```
-ptl 2 ** 10    ## 1024
-ptl 3 ** 3     ## 27
-```
-
-The `pow(a, b)` function from v1.0 still works and does the same thing.
-`**` is just shorter to write.
-
----
-
-### Ternary expression — `cond ? a : b`
-
-A ternary expression is a compact `if/el` that produces a **value** rather
-than running a block of code. It's useful when you want to choose between
-two values based on a condition, all on one line:
-
-```
-L label = score >= 60 ? "pass" : "fail"
-```
-
-Read it as: "if `score >= 60` then `"pass"`, otherwise `"fail"`."
-
-Without the ternary, the same logic takes five lines:
-
-```
-L label = ""
-if score >= 60 {
-    label = "pass"
-} el {
-    label = "fail"
-}
-```
-
-You can use a ternary anywhere an expression is allowed — inside an
-f-string, as a function argument, as part of a larger expression:
-
-```
-ptl f"Result: {score >= 60 ? "pass" : "fail"}"
-```
-
-Keep ternaries simple. If the condition or either branch is complicated,
-a full `if/el` block is easier to read.
-
----
-
-### Slices — `lst[a:b]`
-
-A **slice** extracts a portion of a list or string without modifying the original.
-Write `[start:stop]` inside the brackets — the result includes `start` but
-stops **before** `stop`.
-
-```
-L nums = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-
-ptl nums[2:5]    ## [2, 3, 4]   — from index 2 up to (not including) 5
-ptl nums[:3]     ## [0, 1, 2]   — from the beginning up to index 3
-ptl nums[7:]     ## [7, 8, 9]   — from index 7 to the end
-```
-
-Slices work on strings too:
-
-```
-L word = "MinLang"
-
-ptl word[0:3]    ## "Min"
-ptl word[3:]     ## "Lang"
-ptl word[:3]     ## "Min"
-```
-
-A slice always returns a **new** list or string. The original is untouched.
-
----
-
-### List destructuring — `L [a, b, *rest] = lst`
-
-Destructuring lets you unpack a list into individual variables in one line
-instead of accessing each index separately:
-
-```
-## Old way
-L coords = [10, 20, 30]
-L x = coords[0]
-L y = coords[1]
-L z = coords[2]
-
-## New way
-L [x, y, z] = [10, 20, 30]
-```
-
-The `*name` syntax collects all remaining elements into a sub-list:
-
-```
-L [first, *rest] = [1, 2, 3, 4, 5]
-ptl first    ## 1
-ptl rest     ## [2, 3, 4, 5]
-```
-
-This is useful when a function returns multiple values packaged as a list,
-or when you want to split the head of a list from its tail.
-
----
-
-### Dict destructuring — `L {a, b} = dct`
-
-Similarly, you can pull dictionary values into variables using the key names:
-
-```
-L user = {"name": "Alice", "score": 99, "level": 7}
-L {name, score, level} = user
-
-ptl f"{name} is level {level} with {score} points."
-```
-
-This is exactly equivalent to writing:
-
-```
-L name  = user["name"]
-L score = user["score"]
-L level = user["level"]
-```
-
-The variable names must match the dictionary keys exactly.
-
----
-
-### Variadic functions — `fn f(*args)`
-
-A **variadic function** accepts any number of arguments. Add `*name` as the
-last parameter and it will collect all extra arguments into a list:
-
-```
-fn greetAll(*names) {
-    lp name in names {
-        ptl f"Hello, {name}!"
+    fn str() {
+        rt self.name
     }
 }
 
-greetAll("Alice", "Bob", "Charlie")
-```
+L contacts = []
 
-Output:
-```
-Hello, Alice!
-Hello, Bob!
-Hello, Charlie!
-```
+ptl "=== Contact Book ==="
+ptl "Commands: add / find / list / quit"
 
-You can mix regular parameters with `*args` — regular ones come first:
+wh T {
+    inp "> " command
 
-```
-fn log(level, *messages) {
-    lp msg in messages {
-        ptl f"[{level}] {msg}"
+    if command == "quit" {
+        ptl "Goodbye!"
+        brk
+
+    } elif command == "add" {
+        inp "Name:  " cname
+        inp "Phone: " cphone
+        inp "Email: " cemail
+        push(contacts, Contact(cname, cphone, cemail))
+        ptl f"Saved {cname}."
+
+    } elif command == "list" {
+        if len(contacts) == 0 {
+            ptl "No contacts yet."
+        } el {
+            lp c in contacts {
+                c.display()
+                ptl "  ─────────"
+            }
+        }
+
+    } elif command == "find" {
+        inp "Search name: " query
+        L found = flt2(contacts, fn(c) { rt c.name.lo().has(lo(query)) })
+        if len(found) == 0 {
+            ptl "No matches."
+        } el {
+            lp c in found { c.display() }
+        }
+
+    } el {
+        ptl "Unknown command."
     }
 }
-
-log("INFO", "Server started", "Listening on port 8080")
 ```
 
 ---
 
-### Anonymous functions — `fn(x) { rt expr }`
-
-Before v1.1, every function needed a name and its own statement.
-This was awkward when passing a simple transformation to `map` or `flt2`:
-
-```
-## Old: had to define a named function just for one use
-fn isPositive(x) { rt x > 0 }
-L positives = flt2(numbers, isPositive)
-```
-
-Now you can write the function inline, right where it's used:
-
-```
-L positives = flt2(numbers, fn(x) { rt x > 0 })
-```
-
-Anonymous functions are full closures — they capture variables from the
-surrounding scope just like named functions do:
-
-```
-L threshold = 5
-L big = flt2([1, 3, 7, 2, 9], fn(x) { rt x > threshold })
-ptl big    ## [7, 9]
-```
-
-You can also store an anonymous function in a variable and call it later:
-
-```
-L square = fn(x) { rt x * x }
-ptl square(7)    ## 49
-```
-
----
-
-### Error handling — `try { } catch e { }`
-
-Some operations can fail at runtime — converting bad input, dividing by zero,
-accessing a missing file. Without error handling, any of these crashes the
-whole program. `try/catch` lets you handle the failure gracefully:
-
-```
-try {
-    L n = int("hello")    ## this will fail
-    ptl f"Got: {n}"
-} catch e {
-    ptl f"Something went wrong: {e}"
-}
-```
-
-The code inside `try { }` runs normally. If **any** error occurs, execution
-jumps immediately to `catch`, and the variable after `catch` (here `e`) is
-set to the error message as a string.
-
-A practical use — validating user input without crashing:
-
-```
-inp "Enter a number: " raw
-
-try {
-    L n = int(raw)
-    ptl f"Doubled: {n * 2}"
-} catch e {
-    ptl "That was not a valid number."
-}
-```
-
-`try/catch` only catches genuine runtime errors. The control-flow keywords
-`rt`, `brk`, and `cnt` are not errors — they pass through `try` blocks
-unaffected.
-
----
-
-### Multiline strings — `"""..."""`
-
-Triple-quoted strings preserve line breaks exactly as written.
-They're useful for long messages, templates, or any text that spans
-several lines:
-
-```
-L letter = """Dear Alice,
-
-Thank you for your message.
-We will respond shortly.
-
-Regards,
-The Team"""
-
-ptl letter
-```
-
-Output:
-```
-Dear Alice,
-
-Thank you for your message.
-We will respond shortly.
-
-Regards,
-The Team
-```
-
-Everything between the opening `"""` and closing `"""` is part of the string,
-including newlines and indentation. Escape sequences like `\n` and `\t` still
-work inside triple-quoted strings.
-
----
-
-### Dict methods — `.keys()`, `.values()`, `.items()`, `.get()`
-
-Dictionaries now have methods you can call directly on them,
-making iteration and safe lookup much more natural.
-
-**Iterating over a dictionary:**
-
-```
-L prices = {"apple": 1.2, "banana": 0.5, "cherry": 2.0}
-
-lp pair in prices.items() {
-    ptl f"{pair[0]}: £{pair[1]}"
-}
-```
-
-Output:
-```
-apple: £1.2
-banana: £0.5
-cherry: £2.0
-```
-
-**Getting all keys or all values:**
-
-```
-ptl prices.keys()      ## [apple, banana, cherry]
-ptl prices.values()    ## [1.2, 0.5, 2.0]
-```
-
-**Safe lookup with a default:**
-
-```
-L price = prices.get("mango", 0.0)
-ptl price    ## 0.0 — "mango" wasn't in the dict, so the default was returned
-```
-
-**Checking if a key exists, deleting, merging:**
-
-```
-ptl prices.has("apple")    ## T
-prices.del("banana")
-L updated = prices.merge({"grape": 1.8})
-```
-
----
-
-### Nil-safe access — `?.`
-
-When a value might be `nil`, calling a method on it would normally crash.
-The `?.` operator returns `nil` instead:
-
-```
-L result = toInt("abc")   ## result = nil (conversion failed)
-
-## Old way — had to check manually:
-if result != nil {
-    ptl result.len()
-}
-
-## New way:
-ptl result?.len()    ## nil — no crash, no if needed
-```
-
-This is most useful in chains where an earlier step might produce `nil`:
-
-```
-L user = nil
-ptl user?.name          ## nil — no crash
-ptl user?.score?.fmt()  ## nil — the whole chain short-circuits
-```
-
----
-
-### Module system — `use "file.minl"`
-
-`use` runs another `.minl` file and makes everything it defines available
-in the current program. This lets you split a large program across multiple
-files.
-
-**utils.minl:**
-```
-fn clamp(x, lo, hi) {
-    rt x < lo ? lo : (x > hi ? hi : x)
-}
-
-fn lerp(a, b, t) {
-    rt a + (b - a) * t
-}
-```
-
-**main.minl:**
-```
-use "utils.minl"
-
-ptl clamp(150, 0, 100)     ## 100
-ptl lerp(0, 100, 0.25)     ## 25.0
-```
-
-All functions and variables defined in the imported file become available
-immediately after the `use` line. You can use as many `use` statements as
-you need — just make sure each file path is correct relative to where you
-run the interpreter from.
-
----
-
-## Updated Quick Reference Card
+## 19. Quick Reference Card
 
 ```
 ## ── VARIABLES ────────────────────────────────
 L x = 5             ## declare
 x = 10              ## reassign
 x += 1              ## compound assign  (also -=  *=  /=  %=)
-L [a, b] = lst      ## list destructure
-L {x, y} = dct      ## dict destructure
+L [a, b] = lst      ## list unpack
+L [a, *rest] = lst  ## list unpack with rest
+L {x, y} = dct      ## dict unpack
 
 ## ── OUTPUT ───────────────────────────────────
 ptl "text"          ## print with newline
 pt  "text"          ## print without newline
 ptl f"x = {x}"      ## f-string
-ptl """             ## multiline string
+L s = """
 line one
-line two"""
+line two"""         ## multiline string
 
 ## ── INPUT ────────────────────────────────────
 inp x               ## read into x
@@ -1982,6 +2388,25 @@ fn name(a, b) {
 }
 fn name(*args) { }       ## variadic — args is a list
 fn(x) { rt x * 2 }       ## anonymous function (lambda)
+
+## ── STRUCTS ───────────────────────────────────
+struct Dog {
+    fn init(name) {
+        self.name = name    ## store attribute
+    }
+    fn bark() {
+        ptl f"Woof, {self.name}!"
+    }
+    fn str() { rt f"Dog({self.name})" }
+}
+L d = Dog("Rex")        ## create instance
+d.bark()                ## call method
+ptl d.name              ## read attribute
+d.name = "Max"          ## write attribute  (outside)
+## self.x += 1          ## compound assign  (inside method)
+isObj(d)                ## T
+className(d)            ## "Dog"
+instanceof(d, Dog)      ## T
 
 ## ── ERROR HANDLING ───────────────────────────
 try {
@@ -2040,8 +2465,9 @@ d.has("key")  d.del("key")  d.merge(other)
 keys(d)  values(d)  items(d)  hasKey(d, k)
 
 ## ── TYPE CHECKS ──────────────────────────────
-isInt  isFlt  isStr  isLst  isDct  isBool  isNil  type
-canInt  canFlt  toInt  toFlt  int  flt  str
+isInt  isFlt  isStr  isLst  isDct  isBool  isNil
+isObj  instanceof(obj, Cls)  className(obj)
+canInt  canFlt  toInt  toFlt  int  flt  str  type
 
 ## ── TIME ─────────────────────────────────────
 now()  clock()  date()  sleep(s)
