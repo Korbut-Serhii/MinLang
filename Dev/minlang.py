@@ -1,17 +1,22 @@
 """
-MinLang Interpreter — v1.2
+MinLang Interpreter — v1.3
 A minimalist programming language. Maximum power, minimum keystrokes.
 Source files use the .minl extension.
 
-New in v1.2:
-    ✦ Structs (OOP):        struct Dog { fn init(name, age) { self.name = name } }
-    ✦ Instance creation:    L d = Dog("Rex", 3)
-    ✦ Attribute access:     ptl d.name
-    ✦ Attribute assignment: d.name = "Max"   /   self.x = val  (inside methods)
-    ✦ Method calls:         d.bark()
-    ✦ instanceof check:     instanceof(d, Dog)  → T
-    ✦ className builtin:    className(d)        → "Dog"
-    ✦ Line numbers:         all errors now report the source line
+New in v1.3:
+    ✦ Struct inheritance:   struct Cat extends Animal { ... }
+    ✦ super keyword:        super.method(args)  inside child methods
+    ✦ instanceof hierarchy: instanceof(cat, Animal) → T  (walks chain)
+    ✦ Module namespaces:    import "utils.minl" as utils
+                            utils.myFunc()  /  utils.myVar
+    ✦ export keyword:       export myFunc   (inside module file)
+                            (if no exports declared → all names exported)
+    ✦ throw / typed errors: throw "oops"
+                            throw MyError("msg")   (any value)
+                            try { } catch e { }    e holds the thrown value
+    ✦ Integer division:     17 // 5  → 3
+    ✦ Bitwise operators:    & | ^ ~ << >>
+    ✦ Deep recursion:       Python recursion limit raised to 10 000
 
 Architecture:
     Source code (.minl file)
@@ -31,6 +36,10 @@ import sys
 import re
 import math
 import os
+
+# Raise Python's recursion limit so MinLang programs can recurse deeper.
+# Each MinLang call uses ~8 internal Python frames, so we multiply accordingly.
+sys.setrecursionlimit(50_000)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -89,6 +98,21 @@ TOKEN_PATTERNS = [
 
     # Plain assignment
     ('ASSIGN',       r'='),
+
+    # ── v1.3: bitwise / integer-division (before single-char OP) ──
+    # Integer division //  before single /
+    ('OP_IDIV',      r'//'),
+    # Bit shifts << >> before < >
+    ('OP_LSHIFT',    r'<<'),
+    ('OP_RSHIFT',    r'>>'),
+    # Bitwise AND &  (after &&)
+    ('OP_BAND',      r'&'),
+    # Bitwise OR  |  (after ||)
+    ('OP_BOR',       r'\|'),
+    # Bitwise XOR ^
+    ('OP_BXOR',      r'\^'),
+    # Bitwise NOT ~ (unary)
+    ('OP_BNOT',      r'~'),
 
     # Arithmetic / comparison
     ('OP',           r'[+\-*/%<>]'),
@@ -150,11 +174,14 @@ def tokenize(code):
 #  STAGE 2 — PARSER
 #
 #  Operator precedence (lowest → highest):
-#    ternary (?:)  →  ||  →  &&  →  comparisons
-#    →  +/-  →  */% →  ** (right-assoc)
-#    →  unary (-/!)  →  postfix  →  primary
+#    ternary (?:)  →  ||  →  &&
+#    →  | (bor)  →  ^ (bxor)  →  & (band)     ← v1.3
+#    →  comparisons (== != < > <= >=)
+#    →  << >>  (shifts)                        ← v1.3
+#    →  +/-  →  */% //  →  ** (right-assoc)
+#    →  unary (-/!/~)  →  postfix  →  primary
 #
-#  v1.2: tokens are now (type, value, line) triples.
+#  v1.3: tokens are now (type, value, line) triples.
 #        Helper current_line() exposes the line of the current token.
 #        All SyntaxErrors include the offending line number.
 #        Statements in every block are wrapped in SOURCELOC nodes
@@ -181,7 +208,6 @@ class Parser:
         """Return the source line of the current token (1-based)."""
         if self.pos < len(self.tokens):
             return self.tokens[self.pos][2]
-        # If we're past the end, use the last known line
         if self.tokens:
             return self.tokens[-1][2]
         return 1
@@ -245,11 +271,30 @@ class Parser:
         if tok[0] == 'EOF':
             return None
 
-        # ── use "file.minl"  →  module import ──────────────────────
+        # ── use "file.minl"  →  module import (legacy, runs in current scope) ──
         if tok[0] == 'IDENT' and tok[1] == 'use':
             self.advance()
             path = self.parse_expr()
             return ('USE', path)
+
+        # ── import "file.minl" as name  →  module with namespace  (v1.3) ─────
+        if tok[0] == 'IDENT' and tok[1] == 'import':
+            self.advance()
+            path = self.parse_expr()
+            self.expect('IDENT', 'as')
+            alias = self.expect('IDENT')[1]
+            return ('IMPORT', path, alias)
+
+        # ── export name  →  mark variable as exported from module  (v1.3) ────
+        if tok[0] == 'IDENT' and tok[1] == 'export':
+            self.advance()
+            name = self.expect('IDENT')[1]
+            return ('EXPORT', name)
+
+        # ── throw expr  →  raise a MinLang error  (v1.3) ─────────────────────
+        if tok[0] == 'IDENT' and tok[1] == 'throw':
+            self.advance()
+            return ('THROW', self.parse_expr())
 
         # ── struct  →  OOP class definition ──────────────────────
         if tok[0] == 'IDENT' and tok[1] == 'struct':
@@ -457,14 +502,21 @@ class Parser:
 
     def parse_struct(self):
         """
-        struct Name {
-            fn init(field1, field2) { self.field1 = field1 }
-            fn method() { ... }
-        }
-        'self' is injected automatically — do NOT include it in parameter lists.
+        struct Name { fn init(...) { } fn method() { } }
+        v1.3: struct Child extends Parent { ... }
+        'self' is injected automatically — do NOT include it in param lists.
+        'super' is available inside child methods to call parent methods.
         """
         self.advance()                  # consume 'struct'
         name = self.expect('IDENT')[1]
+
+        # ── v1.3: optional inheritance ────────────────────────────
+        parent_name = None
+        self.skip_newlines()
+        if self.current()[0] == 'IDENT' and self.current()[1] == 'extends':
+            self.advance()              # consume 'extends'
+            parent_name = self.expect('IDENT')[1]
+
         self.expect('LBRACE')
         methods = {}                    # method_name → (params, body, variadic)
         while True:
@@ -487,7 +539,7 @@ class Parser:
                     f"Duplicate method '{fname}' in struct '{name}'"
                 )
             methods[fname] = (params, body, variadic)
-        return ('STRUCTDEF', name, methods)
+        return ('STRUCTDEF', name, parent_name, methods)
 
     # ── Expression parsing (recursive descent) ───────────────────
     #
@@ -495,13 +547,17 @@ class Parser:
     #    └─ parse_ternary    (?:)
     #         └─ parse_or        (||)
     #              └─ parse_and      (&&)
-    #                   └─ parse_compare   (== != < > <= >=)
-    #                        └─ parse_additive    (+ -)
-    #                             └─ parse_multiplicative  (* / %)
-    #                                  └─ parse_power   (**, right-assoc)
-    #                                       └─ parse_unary   (- !)
-    #                                            └─ parse_postfix
-    #                                                 └─ parse_primary
+    #                   └─ parse_bor      (|)         ← v1.3
+    #                        └─ parse_bxor     (^)    ← v1.3
+    #                             └─ parse_band     (&)  ← v1.3
+    #                                  └─ parse_compare  (== != < > <= >=)
+    #                                       └─ parse_shift   (<< >>)  ← v1.3
+    #                                            └─ parse_additive (+-)
+    #                                                 └─ parse_multiplicative (* / // %)
+    #                                                      └─ parse_power (**,right-assoc)
+    #                                                           └─ parse_unary (-/!/~)
+    #                                                                └─ parse_postfix
+    #                                                                     └─ parse_primary
 
     def parse_expr(self):
         return self.parse_ternary()
@@ -524,21 +580,56 @@ class Parser:
         return left
 
     def parse_and(self):
-        left = self.parse_compare()
+        left = self.parse_bor()
         while self.current()[0] == 'OP_AND':
             self.advance()
-            left = ('BINOP', '&&', left, self.parse_compare())
+            left = ('BINOP', '&&', left, self.parse_bor())
         return left
 
+    # ── v1.3: bitwise OR / XOR / AND ─────────────────────────────
+
+    def parse_bor(self):
+        left = self.parse_bxor()
+        while self.current()[0] == 'OP_BOR':
+            self.advance()
+            left = ('BINOP', '|', left, self.parse_bxor())
+        return left
+
+    def parse_bxor(self):
+        left = self.parse_band()
+        while self.current()[0] == 'OP_BXOR':
+            self.advance()
+            left = ('BINOP', '^', left, self.parse_band())
+        return left
+
+    def parse_band(self):
+        left = self.parse_compare()
+        while self.current()[0] == 'OP_BAND':
+            self.advance()
+            left = ('BINOP', '&', left, self.parse_compare())
+        return left
+
+    # ── comparisons ───────────────────────────────────────────────
+
     def parse_compare(self):
-        left = self.parse_additive()
+        left = self.parse_shift()
         while self.current()[0] in ('OP_EQ', 'OP_NEQ', 'OP_LTE', 'OP_GTE', 'OP'):
             op = self.current()[1]
             if op in ('==', '!=', '<=', '>=', '<', '>'):
                 self.advance()
-                left = ('BINOP', op, left, self.parse_additive())
+                left = ('BINOP', op, left, self.parse_shift())
             else:
                 break
+        return left
+
+    # ── v1.3: bit shifts ─────────────────────────────────────────
+
+    def parse_shift(self):
+        left = self.parse_additive()
+        while self.current()[0] in ('OP_LSHIFT', 'OP_RSHIFT'):
+            op = '<<' if self.current()[0] == 'OP_LSHIFT' else '>>'
+            self.advance()
+            left = ('BINOP', op, left, self.parse_additive())
         return left
 
     def parse_additive(self):
@@ -549,8 +640,15 @@ class Parser:
 
     def parse_multiplicative(self):
         left = self.parse_power()
-        while self.current()[0] == 'OP' and self.current()[1] in ('*', '/', '%'):
-            left = ('BINOP', self.advance()[1], left, self.parse_power())
+        while True:
+            tok = self.current()
+            if tok[0] == 'OP' and tok[1] in ('*', '/', '%'):
+                left = ('BINOP', self.advance()[1], left, self.parse_power())
+            elif tok[0] == 'OP_IDIV':           # v1.3: //
+                self.advance()
+                left = ('BINOP', '//', left, self.parse_power())
+            else:
+                break
         return left
 
     def parse_power(self):
@@ -568,6 +666,9 @@ class Parser:
         if self.current()[0] == 'OP_NOT':
             self.advance()
             return ('UNOP', '!', self.parse_unary())
+        if self.current()[0] == 'OP_BNOT':      # v1.3: ~
+            self.advance()
+            return ('UNOP', '~', self.parse_unary())
         return self.parse_postfix()
 
     def parse_postfix(self):
@@ -745,13 +846,19 @@ class Parser:
 #  exec_stmt    — runs a statement node (side effects, no value)
 #  eval         — evaluates an expression node (returns a value)
 #
-#  Control flow (rt / brk / cnt) is implemented via Python
+#  Control flow (rt / brk / cnt / throw) is implemented via Python
 #  exceptions so they bubble through arbitrarily nested calls.
 #
-#  v1.2 additions:
-#    MinLangClass    — runtime representation of a struct type
-#    MinLangInstance — runtime representation of a struct instance
-#    SOURCELOC nodes — drive self._current_line for error reporting
+#  v1.3 additions:
+#    MinLangClass.parent     — single-parent inheritance chain
+#    MinLangSuper            — proxy bound to `super` inside methods
+#    MinLangModule           — namespace produced by `import … as`
+#    MinLangThrow            — user-raised errors (throw expr)
+#    _find_method            — walks inheritance chain for method lookup
+#    _call_method            — now accepts dispatching_class, injects super
+#    instanceof              — now walks the full inheritance chain
+#    STRUCTDEF node          — now carries parent_name field
+#    IMPORT / EXPORT / THROW — new statement kinds
 # ═══════════════════════════════════════════════════════════════
 
 class ReturnException(Exception):
@@ -759,6 +866,12 @@ class ReturnException(Exception):
 
 class BreakException(Exception):    pass
 class ContinueException(Exception): pass
+
+class MinLangThrow(Exception):
+    """Raised by the MinLang `throw` statement. Carries the thrown value."""
+    def __init__(self, val):
+        self.val = val
+        super().__init__(str(val))
 
 
 class Environment:
@@ -803,14 +916,16 @@ class Function:
 class MinLangClass:
     """
     Runtime representation of a struct definition.
-    Calling an instance of this class (e.g. Dog("Rex", 3)) constructs
-    a MinLangInstance and runs the 'init' method if present.
+    v1.3: carries an optional parent (MinLangClass) for inheritance.
     """
-    def __init__(self, name, methods):
+    def __init__(self, name, methods, parent=None):
         self.name    = name
-        self.methods = methods  # dict[str, Function]
+        self.methods = methods   # dict[str, Function] — own methods only
+        self.parent  = parent    # MinLangClass | None
 
     def __repr__(self):
+        if self.parent:
+            return f"<class {self.name} extends {self.parent.name}>"
         return f"<class {self.name}>"
 
 
@@ -818,7 +933,7 @@ class MinLangInstance:
     """
     Runtime representation of a struct instance.
     Attributes are stored in a plain dict; methods are looked up
-    on the class and called with 'self' injected automatically.
+    on the class (and its parents) and called with 'self' injected.
     """
     def __init__(self, klass):
         self.klass = klass
@@ -828,10 +943,38 @@ class MinLangInstance:
         return f"<{self.klass.name} instance>"
 
 
+class MinLangSuper:
+    """
+    Proxy bound to the name `super` inside a child method.
+    Calls on it resolve to methods of the parent class but keep `self`
+    bound to the current instance, just like Python's super().
+    """
+    def __init__(self, parent_class, instance):
+        self.parent_class = parent_class
+        self.instance     = instance
+
+    def __repr__(self):
+        return f"<super of {self.parent_class.name}>"
+
+
+class MinLangModule:
+    """
+    Namespace produced by `import "file.minl" as name`.
+    Exposes the module's exported variables as attributes.
+    Access: mod.func()  or  mod.var
+    """
+    def __init__(self, path, exports):
+        self.path    = path     # source path (used in error messages)
+        self.exports = exports  # dict[str, value]
+
+    def __repr__(self):
+        return f"<module '{self.path}'>"
+
+
 class Interpreter:
 
     def __init__(self):
-        self.global_env   = Environment()
+        self.global_env    = Environment()
         self._current_line = None   # updated by SOURCELOC; shown in runtime errors
         self._setup_builtins()
 
@@ -889,13 +1032,9 @@ class Interpreter:
         e.set('isObj',  lambda a: isinstance(a[0], MinLangInstance))
         e.set('type',   lambda a: type(a[0]).__name__)
 
-        # OOP helpers
-        e.set('instanceof', lambda a: (
-            isinstance(a[0], MinLangInstance) and
-            isinstance(a[1], MinLangClass)    and
-            a[0].klass.name == a[1].name
-        ))
-        e.set('className', lambda a: (
+        # OOP helpers — instanceof now walks the full inheritance chain (v1.3)
+        e.set('instanceof', lambda a: self._instanceof(a[0], a[1]))
+        e.set('className',  lambda a: (
             a[0].klass.name if isinstance(a[0], MinLangInstance)
             else type(a[0]).__name__
         ))
@@ -973,6 +1112,33 @@ class Interpreter:
         e.vars['inf'] = float('inf')
         e.vars['nan'] = float('nan')
 
+    # ── v1.3: instanceof walks the full inheritance chain ─────────
+
+    def _instanceof(self, obj, klass):
+        if not isinstance(obj, MinLangInstance) or not isinstance(klass, MinLangClass):
+            return False
+        current = obj.klass
+        while current is not None:
+            if current.name == klass.name:
+                return True
+            current = current.parent
+        return False
+
+    # ── v1.3: method lookup walks the inheritance chain ───────────
+
+    def _find_method(self, klass, name):
+        """
+        Walk the inheritance chain to find method `name`.
+        Returns (Function, MinLangClass) — the function and the class it lives on.
+        Returns (None, None) if not found anywhere in the chain.
+        """
+        current = klass
+        while current is not None:
+            if name in current.methods:
+                return current.methods[name], current
+            current = current.parent
+        return None, None
+
     # ── Function / constructor calling ────────────────────────────
 
     def _call_fn(self, fn, args):
@@ -992,23 +1158,33 @@ class Interpreter:
             return None
 
         elif isinstance(fn, MinLangClass):
-            # Struct constructor: create instance, call 'init' if defined
+            # v1.3: use _find_method so inherited init works
             instance = MinLangInstance(fn)
-            init = fn.methods.get('init')
+            init, init_class = self._find_method(fn, 'init')
             if init:
-                self._call_method(instance, init, args)
+                self._call_method(instance, init, args, init_class)
             return instance
 
         raise TypeError(f"Cannot call: {fn!r}")
 
-    def _call_method(self, instance, method_fn, args):
+    def _call_method(self, instance, method_fn, args, dispatching_class=None):
         """
         Execute a struct method with 'self' bound to the instance.
-        'self' is injected as the first name in the method's scope;
-        it does NOT appear in the user-facing param list.
+        v1.3: also injects 'super' pointing to the parent of dispatching_class,
+              so that child methods can call super.method(args).
         """
         env = Environment(method_fn.env)
         env.set('self', instance)
+
+        # ── Inject `super` ────────────────────────────────────────
+        # dispatching_class is the class that owns method_fn.
+        # super should point to its parent, not necessarily instance.klass.parent,
+        # so that multi-level chains work correctly.
+        if dispatching_class is not None and dispatching_class.parent is not None:
+            env.set('super', MinLangSuper(dispatching_class.parent, instance))
+        else:
+            env.set('super', None)
+
         for param, arg in zip(method_fn.params, args):
             env.set(param, arg)
         if method_fn.variadic is not None:
@@ -1023,6 +1199,39 @@ class Interpreter:
         for item in lst:
             acc = self._call_fn(fn, [acc, item])
         return acc
+
+    # ── v1.3: run a file as an isolated module ────────────────────
+
+    def _run_module(self, source, path):
+        """
+        Execute source in a fresh child scope (sees builtins).
+        Returns a MinLangModule whose exports dict contains:
+          - all names listed by `export` statements, OR
+          - every non-dunder top-level name if no exports were declared.
+        """
+        tokens = tokenize(source)
+        ast    = Parser(tokens).parse()
+
+        module_env = Environment(self.global_env)
+        # __exports__ is a list; export statements append to it.
+        module_env.set('__exports__', [])
+
+        self.exec_block(ast, module_env)
+
+        declared = module_env.vars.get('__exports__', [])
+        if declared:
+            exports = {
+                name: module_env.vars[name]
+                for name in declared
+                if name in module_env.vars
+            }
+        else:
+            # No explicit exports → expose everything (except internal marker)
+            exports = {
+                k: v for k, v in module_env.vars.items()
+                if not k.startswith('__')
+            }
+        return MinLangModule(path, exports)
 
     # ── Entry point ───────────────────────────────────────────────
 
@@ -1150,13 +1359,20 @@ class Interpreter:
             env.set(name, Function(name, params, body, env, variadic))
 
         elif kind == 'STRUCTDEF':
-            # Build Function objects for each method, closing over current env
-            _, name, method_defs = node
+            # v1.3: node is now ('STRUCTDEF', name, parent_name, method_defs)
+            _, name, parent_name, method_defs = node
+            parent = None
+            if parent_name is not None:
+                parent = env.get(parent_name)
+                if not isinstance(parent, MinLangClass):
+                    raise TypeError(
+                        f"'{parent_name}' is not a struct — cannot use as parent"
+                    )
             methods = {
                 mname: Function(mname, params, body, env, variadic)
                 for mname, (params, body, variadic) in method_defs.items()
             }
-            env.set(name, MinLangClass(name, methods))
+            env.set(name, MinLangClass(name, methods, parent))
 
         elif kind == 'RETURN':
             raise ReturnException(self.eval(node[1], env))
@@ -1167,18 +1383,29 @@ class Interpreter:
         elif kind == 'CONTINUE':
             raise ContinueException()
 
+        elif kind == 'THROW':
+            # v1.3: throw any value — string, instance, etc.
+            _, val_node = node
+            raise MinLangThrow(self.eval(val_node, env))
+
         elif kind == 'TRY':
             _, body, err_var, handler = node
             try:
                 self.exec_block(body, Environment(env))
             except (ReturnException, BreakException, ContinueException):
                 raise
+            except MinLangThrow as e:
+                # v1.3: user-thrown value exposed as-is (not stringified)
+                handler_env = Environment(env)
+                handler_env.set(err_var, e.val)
+                self.exec_block(handler, handler_env)
             except Exception as exc:
                 handler_env = Environment(env)
                 handler_env.set(err_var, str(exc))
                 self.exec_block(handler, handler_env)
 
         elif kind == 'USE':
+            # Legacy: run file in current scope (no namespace isolation)
             _, path_node = node
             path = self.eval(path_node, env)
             try:
@@ -1187,6 +1414,29 @@ class Interpreter:
                 raise RuntimeError(f"Module not found: '{path}'")
             ast = Parser(tokenize(src)).parse()
             self.exec_block(ast, env)
+
+        elif kind == 'IMPORT':
+            # v1.3: import "file.minl" as name  →  isolated namespace
+            _, path_node, alias = node
+            path = self.eval(path_node, env)
+            try:
+                src = open(path, encoding='utf-8').read()
+            except FileNotFoundError:
+                raise RuntimeError(f"Module not found: '{path}'")
+            module = self._run_module(src, path)
+            env.set(alias, module)
+
+        elif kind == 'EXPORT':
+            # v1.3: register a name in the module's export list
+            _, name = node
+            try:
+                export_list = env.get('__exports__')
+            except NameError:
+                raise RuntimeError("'export' can only be used inside a module file")
+            if not isinstance(export_list, list):
+                raise RuntimeError("'export' can only be used inside a module file")
+            if name not in export_list:
+                export_list.append(name)
 
         elif kind == 'DESTRUCT_LIST':
             _, names, rest_name, val_node = node
@@ -1249,20 +1499,26 @@ class Interpreter:
             _, op, l, r = node
             lv = self.eval(l, env)
             rv = self.eval(r, env)
-            if op == '+':  return lv + rv
-            if op == '-':  return lv - rv
-            if op == '*':  return lv * rv
-            if op == '/':  return lv / rv
-            if op == '%':  return lv % rv
-            if op == '**': return lv ** rv
-            if op == '<':  return lv <  rv
-            if op == '>':  return lv >  rv
-            if op == '<=': return lv <= rv
-            if op == '>=': return lv >= rv
-            if op == '==': return lv == rv
-            if op == '!=': return lv != rv
-            if op == '&&': return lv and rv
-            if op == '||': return lv or  rv
+            if op == '+':   return lv + rv
+            if op == '-':   return lv - rv
+            if op == '*':   return lv * rv
+            if op == '/':   return lv / rv
+            if op == '%':   return lv % rv
+            if op == '**':  return lv ** rv
+            if op == '//':  return lv // rv          # v1.3: integer division
+            if op == '<':   return lv <  rv
+            if op == '>':   return lv >  rv
+            if op == '<=':  return lv <= rv
+            if op == '>=':  return lv >= rv
+            if op == '==':  return lv == rv
+            if op == '!=':  return lv != rv
+            if op == '&&':  return lv and rv
+            if op == '||':  return lv or  rv
+            if op == '&':   return int(lv) &  int(rv)   # v1.3: bitwise
+            if op == '|':   return int(lv) |  int(rv)
+            if op == '^':   return int(lv) ^  int(rv)
+            if op == '<<':  return int(lv) << int(rv)
+            if op == '>>':  return int(lv) >> int(rv)
 
         # ── Unary operations ──────────────────────────────────────
         if kind == 'UNOP':
@@ -1270,6 +1526,7 @@ class Interpreter:
             v = self.eval(val, env)
             if op == '-': return -v
             if op == '!': return not v
+            if op == '~': return ~int(v)              # v1.3: bitwise NOT
 
         # ── Function / constructor call ───────────────────────────
         if kind == 'CALL':
@@ -1311,15 +1568,26 @@ class Interpreter:
         if kind == 'ATTR':
             _, obj_node, attr = node
             obj = self.eval(obj_node, env)
+
             if isinstance(obj, MinLangInstance):
                 if attr in obj.attrs:
                     return obj.attrs[attr]
-                # Also allow reading methods as first-class values
-                if attr in obj.klass.methods:
-                    return obj.klass.methods[attr]
+                # Allow reading methods as first-class values
+                m, _ = self._find_method(obj.klass, attr)
+                if m is not None:
+                    return m
                 raise AttributeError(
                     f"'{obj.klass.name}' instance has no attribute '{attr}'"
                 )
+
+            # v1.3: module attribute access
+            if isinstance(obj, MinLangModule):
+                if attr in obj.exports:
+                    return obj.exports[attr]
+                raise AttributeError(
+                    f"Module '{obj.path}' has no export '{attr}'"
+                )
+
             if attr == 'len': return len(obj)
             return getattr(obj, attr)
 
@@ -1331,6 +1599,8 @@ class Interpreter:
                 return None
             if isinstance(obj, MinLangInstance):
                 return obj.attrs.get(attr)
+            if isinstance(obj, MinLangModule):
+                return obj.exports.get(attr)
             if attr == 'len': return len(obj)
             return getattr(obj, attr)
 
@@ -1339,14 +1609,32 @@ class Interpreter:
     def _dispatch_method(self, obj, method, args):
         """Central method dispatch — shared by METHOD and SAFE_METHOD."""
 
-        # ── Struct instance methods ─────────────────────────────
+        # ── v1.3: struct instance methods (with inheritance) ─────
         if isinstance(obj, MinLangInstance):
-            m = obj.klass.methods.get(method)
+            m, found_class = self._find_method(obj.klass, method)
             if m is None:
                 raise AttributeError(
                     f"'{obj.klass.name}' has no method '{method}'"
                 )
-            return self._call_method(obj, m, args)
+            return self._call_method(obj, m, args, found_class)
+
+        # ── v1.3: super proxy — calls parent's method ────────────
+        if isinstance(obj, MinLangSuper):
+            m, found_class = self._find_method(obj.parent_class, method)
+            if m is None:
+                raise AttributeError(
+                    f"Parent class '{obj.parent_class.name}' has no method '{method}'"
+                )
+            return self._call_method(obj.instance, m, args, found_class)
+
+        # ── v1.3: module method call ──────────────────────────────
+        if isinstance(obj, MinLangModule):
+            fn = obj.exports.get(method)
+            if fn is None:
+                raise AttributeError(
+                    f"Module '{obj.path}' has no export '{method}'"
+                )
+            return self._call_fn(fn, args)
 
         # ── String methods ──────────────────────────────────────
         if method == 'up':         return obj.upper()
@@ -1394,17 +1682,21 @@ class Interpreter:
         if val is True:  return "T"
         if val is False: return "F"
         if isinstance(val, MinLangClass):
-            return f"<class {val.name}>"
+            return repr(val)
         if isinstance(val, MinLangInstance):
             # Call 'str' method if defined, otherwise format attrs
-            m = val.klass.methods.get('str')
+            m, mc = self._find_method(val.klass, 'str')
             if m:
-                result = self._call_method(val, m, [])
+                result = self._call_method(val, m, [], mc)
                 return self.to_str(result)
             attrs = ', '.join(
                 f"{k}: {self.to_str(v)}" for k, v in val.attrs.items()
             )
             return f"{val.klass.name}({{{attrs}}})"
+        if isinstance(val, MinLangModule):
+            return repr(val)
+        if isinstance(val, MinLangSuper):
+            return repr(val)
         if isinstance(val, float):
             if math.isnan(val):  return "nan"
             if math.isinf(val):  return "inf" if val > 0 else "-inf"
@@ -1441,19 +1733,17 @@ def run_code(source, interp=None):
     except (SyntaxError, NameError, TypeError, AttributeError,
             RuntimeError, KeyError, IndexError, ZeroDivisionError) as e:
         msg = str(e)
-        # Syntax errors embed their own [line N] prefix from the parser/tokenizer.
-        # For runtime errors, prefix with the interpreter's line tracker.
         if not msg.startswith('[line'):
-            line = interp._current_line
+            line   = interp._current_line
             prefix = f"[line {line}] " if line is not None else ""
-            msg = prefix + msg
+            msg    = prefix + msg
         print(f"[Error] {msg}", file=sys.stderr)
     return interp
 
 
 def repl():
     """Interactive REPL with multi-line block support."""
-    print("MinLang REPL v1.2  |  'q' to quit  |  'help' for reference")
+    print("MinLang REPL v1.3  |  'q' to quit  |  'help' for reference")
     print("─" * 56)
     interp = Interpreter()
     buf    = []
@@ -1493,7 +1783,7 @@ def repl():
 def print_help():
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║              MinLang v1.2  —  Quick Reference            ║
+║              MinLang v1.3  —  Quick Reference            ║
 ╠══════════════════════════════════════════════════════════╣
 ║  VARIABLES                                               ║
 ║   L x = 5              declare                           ║
@@ -1529,29 +1819,41 @@ def print_help():
 ║   fn greet(*names) { lp n in names { ptl n } }           ║
 ║                                                          ║
 ║  STRUCTS  (OOP)                                          ║
-║   struct Dog {                                           ║
-║     fn init(name, age) {                                 ║
-║       self.name = name                                   ║
-║       self.age  = age                                    ║
+║   struct Animal {                                        ║
+║     fn init(name) { self.name = name }                   ║
+║     fn speak() { ptl "..." }                             ║
+║   }                                                      ║
+║   struct Dog extends Animal {        ## v1.3             ║
+║     fn init(name, breed) {                               ║
+║       super.init(name)               ## v1.3             ║
+║       self.breed = breed                                 ║
 ║     }                                                    ║
-║     fn bark() {                                          ║
-║       ptl f"Woof! I'm {self.name}"                       ║
-║     }                                                    ║
+║     fn speak() { ptl f"Woof! I'm {self.name}" }          ║
 ║     fn str() { rt f"Dog({self.name})" }                  ║
 ║   }                                                      ║
-║   L d = Dog("Rex", 3)  ## construct                      ║
-║   d.bark()             ## call method                    ║
-║   ptl d.name           ## read attribute                 ║
-║   d.name = "Max"       ## write attribute                ║
-║   instanceof(d, Dog)   ## T                              ║
-║   className(d)         ## "Dog"                          ║
-║   isObj(d)             ## T                              ║
+║   L d = Dog("Rex", "Lab")  ## construct                  ║
+║   d.speak()                ## method call                ║
+║   ptl d.name               ## read attribute             ║
+║   d.name = "Max"           ## write attribute            ║
+║   instanceof(d, Dog)       ## T                          ║
+║   instanceof(d, Animal)    ## T  (chain)  v1.3           ║
+║   className(d)             ## "Dog"                      ║
+║   isObj(d)                 ## T                          ║
 ║                                                          ║
 ║  ERROR HANDLING                                          ║
 ║   try { risky() } catch e { ptl e }                      ║
+║   throw "something went wrong"       ## v1.3             ║
+║   throw MyError("typed error")       ## v1.3             ║
 ║                                                          ║
-║  MODULES                                                 ║
-║   use "utils.minl"       run file in current scope       ║
+║  MODULES  (v1.3)                                         ║
+║   ## In utils.minl:                                      ║
+║   fn helper() { rt 42 }                                  ║
+║   export helper          ## explicit export              ║
+║                                                          ║
+║   ## In main.minl:                                       ║
+║   import "utils.minl" as utils                           ║
+║   ptl utils.helper()                                     ║
+║   use "legacy.minl"      ## old: runs in current scope   ║
 ║                                                          ║
 ║  NIL-SAFE ACCESS                                         ║
 ║   obj?.method()        nil if obj is nil                 ║
@@ -1559,7 +1861,9 @@ def print_help():
 ║                                                          ║
 ║  OPERATORS                                               ║
 ║   2 ** 10              power (right-associative)         ║
+║   17 // 5              integer division → 3    v1.3      ║
 ║   == != < > <= >=  &&  ||  !                             ║
+║   & | ^ ~ << >>        bitwise             v1.3          ║
 ║                                                          ║
 ║  DICT METHODS                                            ║
 ║   d.keys()  d.values()  d.items()                        ║
