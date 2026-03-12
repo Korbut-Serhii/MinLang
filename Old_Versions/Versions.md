@@ -189,8 +189,9 @@ ptl f"Name: {person["name"]}, age: {person["age"]}"
 
 **File:** `v1.0_minlang.py`
 
-Final version. The core language is frozen; this release fills out the
-standard library and makes the interactive REPL usable as a daily tool.
+Final version of the first generation. The core language is frozen;
+this release fills out the standard library and makes the interactive
+REPL usable as a daily tool.
 
 **What's new since v0.8:**
 - Type inspection: `isInt isFlt isStr isLst isDct isBool isNil type`
@@ -217,6 +218,210 @@ lp i in rng(1, 31) {
 
 ---
 
+### v1.1 — Syntax sugar, safety, and modules
+
+**File:** `v1.1_minlang.py`
+
+A focused quality-of-life release. No new data types or execution model
+changes — every addition makes existing patterns shorter or safer to write.
+
+**What's new:**
+
+#### Compound assignment operators
+`+=  -=  *=  /=  %=` — the five most common "update a variable" patterns
+are now single tokens instead of verbose `x = x + 1` rewrites.
+
+```
+L score = 0
+score += 10
+score *= 2     ## score is now 20
+```
+
+#### Power operator `**`
+Right-associative exponentiation, slotted between `*/%` and unary in the
+precedence chain. `pow(a, b)` still works; `**` is just shorter.
+
+```
+ptl 2 ** 10       ## 1024
+ptl 2 ** 3 ** 2   ## 512  (right-associative: 2 ** (3**2))
+```
+
+#### Ternary expression `cond ? a : b`
+Single-line conditional value. Added as the lowest precedence expression
+level, sitting above `||` in the parse chain.
+
+```
+L label = score >= 60 ? "pass" : "fail"
+```
+
+#### Slices `lst[a:b]`
+Python-style half-open slices for both lists and strings. Either bound
+can be omitted: `lst[:3]` means "first three", `lst[2:]` means "from index 2
+to end". The parser extends the `LBRACKET` postfix case to detect `:`.
+
+```
+L nums = [0, 1, 2, 3, 4, 5]
+ptl nums[1:4]   ## [1, 2, 3]
+ptl nums[:3]    ## [0, 1, 2]
+
+L s = "MinLang"
+ptl s[3:]       ## "Lang"
+```
+
+#### List destructuring `L [a, b, *rest] = lst`
+Unpack a list directly into named variables. The optional `*name` suffix
+collects all remaining elements into a sub-list, similar to Python's
+starred assignment.
+
+```
+L [head, *tail] = [10, 20, 30, 40]
+## head = 10,  tail = [20, 30, 40]
+```
+
+#### Dict destructuring `L {a, b} = dct`
+Extract dictionary values into variables using the key names. Equivalent to
+writing `L a = dct["a"]  L b = dct["b"]` but in one line.
+
+```
+L user = {"name": "Alice", "score": 99}
+L {name, score} = user
+ptl f"{name} scored {score}"
+```
+
+#### Variadic functions `fn f(*args)`
+A `*name` parameter in a function definition collects all extra positional
+arguments into a list. Regular parameters can still precede it.
+
+```
+fn total(*nums) {
+    L s = 0
+    lp n in nums { s += n }
+    rt s
+}
+ptl total(1, 2, 3, 4, 5)   ## 15
+```
+
+#### Anonymous functions (lambdas) `fn(x) { rt expr }`
+`fn` can now appear inside an expression, not just as a statement. The
+resulting `Function` object can be stored, passed, or called immediately.
+This makes `map`, `flt2`, and `red` genuinely convenient without requiring
+a named helper function for every one-liner.
+
+```
+L doubled = map([1, 2, 3], fn(x) { rt x * 2 })
+L evens   = flt2([1,2,3,4,5,6], fn(x) { rt x % 2 == 0 })
+L total   = red([1,2,3,4,5], fn(a, b) { rt a + b }, 0)
+```
+
+#### Error handling `try { } catch e { }`
+Wraps a block in a Python `try/except`. If any runtime error occurs,
+execution jumps to the `catch` block with the error message bound to the
+given variable. Control-flow exceptions (`rt`, `brk`, `cnt`) pass through
+unaffected.
+
+```
+try {
+    L n = int("oops")
+} catch e {
+    ptl f"Caught: {e}"
+}
+```
+
+#### Multiline strings `"""..."""`
+Triple-quoted string literals that preserve embedded newlines verbatim.
+The tokenizer matches them before single-quoted strings so they take
+priority. Escape sequences (`\n`, `\t`, `\"`) still work inside them.
+
+```
+L msg = """Dear Alice,
+
+Thank you for your message.
+
+Regards"""
+ptl msg
+```
+
+#### Dict methods
+`.keys()`, `.values()`, `.items()`, `.get(key, default)`, `.has(key)`,
+`.del(key)`, `.merge(other)` — the standard operations that make
+dictionaries fully iterable and navigable without reaching for the
+standalone built-in functions every time.
+
+```
+L d = {"a": 1, "b": 2, "c": 3}
+lp pair in d.items() {
+    ptl f"{pair[0]} → {pair[1]}"
+}
+ptl d.get("z", 0)   ## 0 (default — key not present)
+```
+
+#### Nil-safe access `?.`
+`obj?.method()` and `obj?.attr` return `nil` immediately if `obj` is `nil`,
+instead of crashing with a runtime error. Particularly useful when working
+with optional values or results of safe conversions.
+
+```
+L result = toInt("abc")   ## nil
+ptl result?.len()          ## nil — no crash
+```
+
+#### Module system `use "file.ll"`
+Executes another `.ll` file in the **current scope**, making all its
+functions and variables available to the caller. This is intentionally
+simple: no namespacing, no import aliases — just a clean way to split
+a large program into files.
+
+```
+## utils.ll
+fn clamp(x, lo, hi) { rt x < lo ? lo : (x > hi ? hi : x) }
+
+## main.ll
+use "utils.ll"
+ptl clamp(150, 0, 100)   ## 100
+```
+
+#### Improved float output
+Whole-number floats now display without the trailing `.0` (so `3.0`
+prints as `3` and `1000000.0` prints as `1000000`). Decimal values
+strip unnecessary trailing zeros. The `fmt` built-in gives full control
+for cases that need precise formatting.
+
+```
+ptl 3.0          ## 3
+ptl 3.14         ## 3.14
+ptl fmt(pi, ".4f")   ## 3.1416
+```
+
+**Design note:** compound assignment and slices required the most tokenizer
+work — `+=` etc. needed to precede `+` in `TOKEN_PATTERNS`, and the slice
+`[a:b]` case needed a COLON-detection branch inside the existing `LBRACKET`
+postfix handler. Lambdas were the subtlest parser change: `fn` is now valid
+in both statement position (named function definition) and expression
+position (`parse_primary` checks for `fn` before falling through to `VAR`).
+Everything else was additive — new AST node types, new `exec_stmt`/`eval`
+branches, new built-in lambdas registered in `_setup_builtins`.
+
+```
+## All v1.1 features in one snippet
+L [a, *rest] = [1, 2, 3, 4, 5]
+a += 10
+ptl a                                     ## 11
+ptl 2 ** len(rest)                        ## 16  (2**4)
+ptl len(rest) > 3 ? "long" : "short"      ## short
+
+try {
+    ptl int("bad")
+} catch e {
+    ptl f"error: {e}"
+}
+
+L d = {"x": 10, "y": 20}
+L {x, y} = d
+ptl map([x, y], fn(v) { rt v * 2 })      ## [20, 40]
+```
+
+---
+
 ## File index
 
 ```
@@ -225,7 +430,8 @@ v0.2_minlang.py   — arithmetic expressions
 v0.3_minlang.py   — conditionals and boolean logic
 v0.5_minlang.py   — loops, functions, lexical scoping
 v0.8_minlang.py   — lists, dicts, method calls, f-strings
-v1.0_minlang.py   — final version (current)
+v1.0_minlang.py   — standard library and REPL polish
+v1.1_minlang.py   — syntax sugar, safety, and modules  ← current
 ```
 
 ## Usage

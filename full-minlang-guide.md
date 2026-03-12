@@ -26,6 +26,7 @@
 13. [Dictionaries — labelled boxes](#13-dictionaries--labelled-boxes)
 14. [Built-in tools — the standard library](#14-built-in-tools--the-standard-library)
 15. [Putting it all together — full projects](#15-putting-it-all-together--full-projects)
+16. [New in v1.1 — what was added](#16-new-in-v11--what-was-added)
 
 ---
 
@@ -1318,9 +1319,8 @@ ptl content
 ## Write text to a file (creates it if it doesn't exist, overwrites if it does)
 write("output.txt", "Hello from MinLang!")
 
-## Append to a file (read first, then write with old + new content)
-L old = read("log.txt")
-write("log.txt", old + "\nNew line added")
+## Append to a file (adds to the end without overwriting)
+append("log.txt", "\nNew line added")
 ```
 
 ### System functions
@@ -1507,17 +1507,457 @@ ptl f"Decoded: {decoded}"
 
 ---
 
-## Quick Reference Card
+## 16. New in v1.1 — what was added
+
+Version 1.1 added a set of features focused on writing less code to say
+the same thing. Nothing about the core language changed — variables, loops,
+functions, and data structures all work exactly as before. These are purely
+additional tools.
+
+---
+
+### Compound assignment — updating a variable in one step
+
+Before v1.1, incrementing a counter looked like this:
+
+```
+score = score + 10
+```
+
+Now you can write:
+
+```
+score += 10
+```
+
+All five arithmetic operators have a compound form:
+
+| Write | Means |
+|---|---|
+| `x += n` | `x = x + n` |
+| `x -= n` | `x = x - n` |
+| `x *= n` | `x = x * n` |
+| `x /= n` | `x = x / n` |
+| `x %= n` | `x = x % n` |
+
+A typical loop counter in the old style:
+
+```
+L i = 0
+wh i < 10 {
+    ptl i
+    i = i + 1    ## old style
+}
+```
+
+Same loop with compound assignment:
+
+```
+L i = 0
+wh i < 10 {
+    ptl i
+    i += 1       ## new style
+}
+```
+
+---
+
+### Power operator `**`
+
+`**` raises a number to a power. It is right-associative, meaning
+`2 ** 3 ** 2` is evaluated as `2 ** (3 ** 2)` = `2 ** 9` = `512`.
+
+```
+ptl 2 ** 10    ## 1024
+ptl 3 ** 3     ## 27
+```
+
+The `pow(a, b)` function from v1.0 still works and does the same thing.
+`**` is just shorter to write.
+
+---
+
+### Ternary expression — `cond ? a : b`
+
+A ternary expression is a compact `if/el` that produces a **value** rather
+than running a block of code. It's useful when you want to choose between
+two values based on a condition, all on one line:
+
+```
+L label = score >= 60 ? "pass" : "fail"
+```
+
+Read it as: "if `score >= 60` then `"pass"`, otherwise `"fail"`."
+
+Without the ternary, the same logic takes five lines:
+
+```
+L label = ""
+if score >= 60 {
+    label = "pass"
+} el {
+    label = "fail"
+}
+```
+
+You can use a ternary anywhere an expression is allowed — inside an
+f-string, as a function argument, as part of a larger expression:
+
+```
+ptl f"Result: {score >= 60 ? "pass" : "fail"}"
+```
+
+Keep ternaries simple. If the condition or either branch is complicated,
+a full `if/el` block is easier to read.
+
+---
+
+### Slices — `lst[a:b]`
+
+A **slice** extracts a portion of a list or string without modifying the original.
+Write `[start:stop]` inside the brackets — the result includes `start` but
+stops **before** `stop`.
+
+```
+L nums = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+ptl nums[2:5]    ## [2, 3, 4]   — from index 2 up to (not including) 5
+ptl nums[:3]     ## [0, 1, 2]   — from the beginning up to index 3
+ptl nums[7:]     ## [7, 8, 9]   — from index 7 to the end
+```
+
+Slices work on strings too:
+
+```
+L word = "MinLang"
+
+ptl word[0:3]    ## "Min"
+ptl word[3:]     ## "Lang"
+ptl word[:3]     ## "Min"
+```
+
+A slice always returns a **new** list or string. The original is untouched.
+
+---
+
+### List destructuring — `L [a, b, *rest] = lst`
+
+Destructuring lets you unpack a list into individual variables in one line
+instead of accessing each index separately:
+
+```
+## Old way
+L coords = [10, 20, 30]
+L x = coords[0]
+L y = coords[1]
+L z = coords[2]
+
+## New way
+L [x, y, z] = [10, 20, 30]
+```
+
+The `*name` syntax collects all remaining elements into a sub-list:
+
+```
+L [first, *rest] = [1, 2, 3, 4, 5]
+ptl first    ## 1
+ptl rest     ## [2, 3, 4, 5]
+```
+
+This is useful when a function returns multiple values packaged as a list,
+or when you want to split the head of a list from its tail.
+
+---
+
+### Dict destructuring — `L {a, b} = dct`
+
+Similarly, you can pull dictionary values into variables using the key names:
+
+```
+L user = {"name": "Alice", "score": 99, "level": 7}
+L {name, score, level} = user
+
+ptl f"{name} is level {level} with {score} points."
+```
+
+This is exactly equivalent to writing:
+
+```
+L name  = user["name"]
+L score = user["score"]
+L level = user["level"]
+```
+
+The variable names must match the dictionary keys exactly.
+
+---
+
+### Variadic functions — `fn f(*args)`
+
+A **variadic function** accepts any number of arguments. Add `*name` as the
+last parameter and it will collect all extra arguments into a list:
+
+```
+fn greetAll(*names) {
+    lp name in names {
+        ptl f"Hello, {name}!"
+    }
+}
+
+greetAll("Alice", "Bob", "Charlie")
+```
+
+Output:
+```
+Hello, Alice!
+Hello, Bob!
+Hello, Charlie!
+```
+
+You can mix regular parameters with `*args` — regular ones come first:
+
+```
+fn log(level, *messages) {
+    lp msg in messages {
+        ptl f"[{level}] {msg}"
+    }
+}
+
+log("INFO", "Server started", "Listening on port 8080")
+```
+
+---
+
+### Anonymous functions — `fn(x) { rt expr }`
+
+Before v1.1, every function needed a name and its own statement.
+This was awkward when passing a simple transformation to `map` or `flt2`:
+
+```
+## Old: had to define a named function just for one use
+fn isPositive(x) { rt x > 0 }
+L positives = flt2(numbers, isPositive)
+```
+
+Now you can write the function inline, right where it's used:
+
+```
+L positives = flt2(numbers, fn(x) { rt x > 0 })
+```
+
+Anonymous functions are full closures — they capture variables from the
+surrounding scope just like named functions do:
+
+```
+L threshold = 5
+L big = flt2([1, 3, 7, 2, 9], fn(x) { rt x > threshold })
+ptl big    ## [7, 9]
+```
+
+You can also store an anonymous function in a variable and call it later:
+
+```
+L square = fn(x) { rt x * x }
+ptl square(7)    ## 49
+```
+
+---
+
+### Error handling — `try { } catch e { }`
+
+Some operations can fail at runtime — converting bad input, dividing by zero,
+accessing a missing file. Without error handling, any of these crashes the
+whole program. `try/catch` lets you handle the failure gracefully:
+
+```
+try {
+    L n = int("hello")    ## this will fail
+    ptl f"Got: {n}"
+} catch e {
+    ptl f"Something went wrong: {e}"
+}
+```
+
+The code inside `try { }` runs normally. If **any** error occurs, execution
+jumps immediately to `catch`, and the variable after `catch` (here `e`) is
+set to the error message as a string.
+
+A practical use — validating user input without crashing:
+
+```
+inp "Enter a number: " raw
+
+try {
+    L n = int(raw)
+    ptl f"Doubled: {n * 2}"
+} catch e {
+    ptl "That was not a valid number."
+}
+```
+
+`try/catch` only catches genuine runtime errors. The control-flow keywords
+`rt`, `brk`, and `cnt` are not errors — they pass through `try` blocks
+unaffected.
+
+---
+
+### Multiline strings — `"""..."""`
+
+Triple-quoted strings preserve line breaks exactly as written.
+They're useful for long messages, templates, or any text that spans
+several lines:
+
+```
+L letter = """Dear Alice,
+
+Thank you for your message.
+We will respond shortly.
+
+Regards,
+The Team"""
+
+ptl letter
+```
+
+Output:
+```
+Dear Alice,
+
+Thank you for your message.
+We will respond shortly.
+
+Regards,
+The Team
+```
+
+Everything between the opening `"""` and closing `"""` is part of the string,
+including newlines and indentation. Escape sequences like `\n` and `\t` still
+work inside triple-quoted strings.
+
+---
+
+### Dict methods — `.keys()`, `.values()`, `.items()`, `.get()`
+
+Dictionaries now have methods you can call directly on them,
+making iteration and safe lookup much more natural.
+
+**Iterating over a dictionary:**
+
+```
+L prices = {"apple": 1.2, "banana": 0.5, "cherry": 2.0}
+
+lp pair in prices.items() {
+    ptl f"{pair[0]}: £{pair[1]}"
+}
+```
+
+Output:
+```
+apple: £1.2
+banana: £0.5
+cherry: £2.0
+```
+
+**Getting all keys or all values:**
+
+```
+ptl prices.keys()      ## [apple, banana, cherry]
+ptl prices.values()    ## [1.2, 0.5, 2.0]
+```
+
+**Safe lookup with a default:**
+
+```
+L price = prices.get("mango", 0.0)
+ptl price    ## 0.0 — "mango" wasn't in the dict, so the default was returned
+```
+
+**Checking if a key exists, deleting, merging:**
+
+```
+ptl prices.has("apple")    ## T
+prices.del("banana")
+L updated = prices.merge({"grape": 1.8})
+```
+
+---
+
+### Nil-safe access — `?.`
+
+When a value might be `nil`, calling a method on it would normally crash.
+The `?.` operator returns `nil` instead:
+
+```
+L result = toInt("abc")   ## result = nil (conversion failed)
+
+## Old way — had to check manually:
+if result != nil {
+    ptl result.len()
+}
+
+## New way:
+ptl result?.len()    ## nil — no crash, no if needed
+```
+
+This is most useful in chains where an earlier step might produce `nil`:
+
+```
+L user = nil
+ptl user?.name          ## nil — no crash
+ptl user?.score?.fmt()  ## nil — the whole chain short-circuits
+```
+
+---
+
+### Module system — `use "file.ll"`
+
+`use` runs another `.ll` file and makes everything it defines available
+in the current program. This lets you split a large program across multiple
+files.
+
+**utils.ll:**
+```
+fn clamp(x, lo, hi) {
+    rt x < lo ? lo : (x > hi ? hi : x)
+}
+
+fn lerp(a, b, t) {
+    rt a + (b - a) * t
+}
+```
+
+**main.ll:**
+```
+use "utils.ll"
+
+ptl clamp(150, 0, 100)     ## 100
+ptl lerp(0, 100, 0.25)     ## 25.0
+```
+
+All functions and variables defined in the imported file become available
+immediately after the `use` line. You can use as many `use` statements as
+you need — just make sure each file path is correct relative to where you
+run the interpreter from.
+
+---
+
+## Updated Quick Reference Card
 
 ```
 ## ── VARIABLES ────────────────────────────────
 L x = 5             ## declare
 x = 10              ## reassign
+x += 1              ## compound assign  (also -=  *=  /=  %=)
+L [a, b] = lst      ## list destructure
+L {x, y} = dct      ## dict destructure
 
 ## ── OUTPUT ───────────────────────────────────
 ptl "text"          ## print with newline
 pt  "text"          ## print without newline
 ptl f"x = {x}"      ## f-string
+ptl """             ## multiline string
+line one
+line two"""
 
 ## ── INPUT ────────────────────────────────────
 inp x               ## read into x
@@ -1528,6 +1968,7 @@ if x > 5 {
 } elif x == 5 {
 } el {
 }
+cond ? a : b        ## ternary expression
 
 ## ── LOOPS ────────────────────────────────────
 lp i in rng(10) { }     ## for loop
@@ -1539,27 +1980,64 @@ cnt                      ## continue
 fn name(a, b) {
     rt a + b
 }
+fn name(*args) { }       ## variadic — args is a list
+fn(x) { rt x * 2 }       ## anonymous function (lambda)
+
+## ── ERROR HANDLING ───────────────────────────
+try {
+    risky()
+} catch e {
+    ptl e
+}
+
+## ── MODULES ──────────────────────────────────
+use "utils.ll"           ## run file in current scope
 
 ## ── TYPES ────────────────────────────────────
 T  F  nil             ## true, false, null
 [1, 2, 3]             ## list
 {"key": "value"}      ## dict
 
+## ── OPERATORS ────────────────────────────────
++ - * / %             ## arithmetic
+**                    ## power (right-associative)
+== != < > <= >=       ## comparison
+&&  ||  !             ## logical
+
+## ── SLICES ───────────────────────────────────
+lst[2:5]   lst[:3]   lst[7:]   ## lists
+str[1:4]   str[:3]   str[2:]   ## strings
+
+## ── NIL-SAFE ACCESS ──────────────────────────
+obj?.method()         ## nil if obj is nil
+obj?.attr             ## nil if obj is nil
+
 ## ── MATH ─────────────────────────────────────
-+ - * / %  pow(a,b)  sqrt(x)  abs(x)
++ - * / %  **  pow(a,b)  sqrt(x)  abs(x)
 floor(x)  ceil(x)  rnd(x, 2)  max(a,b)  min(a,b)
+log(x)  sin(x)  cos(x)  tan(x)
+fmt(x, ".2f")         ## format number to string
 
 ## ── STRINGS ──────────────────────────────────
 len(s)  up(s)  lo(s)  trim(s)
 split(s, ",")  join(lst, "-")
 find(s, sub)  contains(s, sub)
 replace(s, old, new)  sub(s, start, end)
+startsWith(s, x)  endsWith(s, x)
 
 ## ── LISTS ────────────────────────────────────
 len(lst)  push(lst, x)  pop(lst)
 sort(lst)  rev(lst)  sum(lst)
 count(lst, x)  idx(lst, x)  uniq(lst)
+flat(lst)  zip2(a, b)  slice(lst, a, b)
 map(lst, fn)  flt2(lst, fn)  red(lst, fn, start)
+
+## ── DICTS ────────────────────────────────────
+d["key"]  d["key"] = val
+d.keys()  d.values()  d.items()
+d.get("key", default)
+d.has("key")  d.del("key")  d.merge(other)
+keys(d)  values(d)  items(d)  hasKey(d, k)
 
 ## ── TYPE CHECKS ──────────────────────────────
 isInt  isFlt  isStr  isLst  isDct  isBool  isNil  type
@@ -1572,5 +2050,8 @@ now()  clock()  date()  sleep(s)
 rand()  randInt(a, b)  pick(lst)  shuffle(lst)
 
 ## ── FILES ────────────────────────────────────
-read("file.txt")  write("file.txt", "content")
+read("file.txt")
+write("file.txt", "content")
+append("file.txt", "more content")
+exists("file.txt")
 ```
