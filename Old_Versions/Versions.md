@@ -551,6 +551,213 @@ ptl className(v1)         ## Vector2
 
 ---
 
+### v1.3 — Inheritance, typed errors, namespaced modules, and bitwise operators
+
+**File:** `v1.3_minlang.py`
+
+The language takes a significant step toward production readiness. Four
+independent subsystems are added — each one self-contained, none breaking
+any existing code.
+
+**What's new:**
+
+#### Struct inheritance `extends` and `super`
+A struct can extend another struct. The child inherits all parent methods and
+can override them. `super.method(args)` calls the parent's version from within
+a child method, making it possible to extend behaviour without duplicating code.
+Inheritance chains can be arbitrarily deep.
+
+```
+struct Animal {
+    fn init(name) { self.name = name }
+    fn speak()    { rt f"{self.name} ..." }
+}
+
+struct Dog extends Animal {
+    fn init(name, breed) {
+        super.init(name)
+        self.breed = breed
+    }
+    fn speak() { rt f"{self.name} Woof!" }
+}
+
+L d = Dog("Rex", "Lab")
+ptl d.speak()       ## Rex Woof!
+ptl d.name          ## Rex  (inherited attribute)
+```
+
+#### `instanceof` walks the inheritance chain
+`instanceof(obj, Cls)` now returns `T` for any class in the ancestry, not just
+the direct class of the instance. `className` still returns the concrete class.
+
+```
+struct GuideDog extends Dog {
+    fn init(name) { super.init(name, "Golden") }
+}
+
+L g = GuideDog("Buddy")
+ptl instanceof(g, GuideDog)   ## T
+ptl instanceof(g, Dog)        ## T  ← new in v1.3
+ptl instanceof(g, Animal)     ## T  ← new in v1.3
+ptl className(g)              ## "GuideDog"
+```
+
+#### `throw` — user-defined errors
+Any value can be thrown with `throw expr`. The `catch` block receives the
+thrown value directly — not a stringified message — so struct instances can
+be thrown as typed errors and `instanceof`-checked in the handler.
+
+```
+struct ValueError {
+    fn init(msg) { self.msg = msg }
+    fn str()     { rt f"ValueError: {self.msg}" }
+}
+
+fn divide(a, b) {
+    if b == 0 { throw ValueError("division by zero") }
+    rt a / b
+}
+
+try {
+    divide(5, 0)
+} catch e {
+    ptl instanceof(e, ValueError)   ## T
+    ptl e.msg                       ## "division by zero"
+}
+```
+
+`throw` can also be used with plain values: `throw "something went wrong"`,
+`throw 404`. Strings thrown this way are caught as-is, not wrapped in an object.
+
+#### Namespaced modules `import "file" as name`
+`import "file.minl" as alias` runs the file in an **isolated scope** and
+binds the result to `alias`. All access goes through the alias — names from
+the module do not leak into the calling scope.
+
+Inside a module, `export name` marks specific names for export. If no
+`export` statements are present, every top-level name is exported.
+
+```
+## math_utils.minl
+fn square(x) { rt x * x }
+fn cube(x)   { rt x * x * x }
+L VERSION = "1.0"
+
+export square
+export cube
+export VERSION
+
+## main.minl
+import "math_utils.minl" as math
+
+ptl math.square(5)   ## 25
+ptl math.cube(3)     ## 27
+ptl math.VERSION     ## "1.0"
+```
+
+The older `use "file.minl"` (runs in current scope, no isolation) still works.
+
+#### Integer division `//`
+`a // b` performs integer (floor) division, always returning a whole number.
+Inserted between `*/% ` and `**` in the precedence chain.
+
+```
+ptl 17 // 5    ## 3   (not 3.4)
+ptl -7 // 2    ## -4  (floor toward negative infinity, same as Python)
+```
+
+#### Bitwise operators `& | ^ ~ << >>`
+All six C-style bitwise operators are added, sitting between `&&/||` and the
+comparison operators in the precedence hierarchy.
+
+| Operator | Meaning | Example |
+|---|---|---|
+| `a & b` | Bitwise AND | `12 & 10` → `8` |
+| `a \| b` | Bitwise OR | `8 \| 4` → `12` |
+| `a ^ b` | Bitwise XOR | `15 ^ 9` → `6` |
+| `~a` | Bitwise NOT (unary) | `~5` → `-6` |
+| `a << n` | Left shift | `1 << 4` → `16` |
+| `a >> n` | Right shift | `256 >> 3` → `32` |
+
+```
+ptl 8 & 12     ## 8
+ptl 8 | 4      ## 12
+ptl 1 << 4     ## 16
+ptl ~5         ## -6
+```
+
+#### Deep recursion
+Python's internal recursion limit is raised to 50 000 frames at interpreter
+startup. This gives MinLang programs approximately 5 000–6 000 levels of
+usable recursion depth, up from Python's default ~1 000.
+
+**Design notes:**
+
+*Inheritance:* `MinLangClass` gains a `parent` field. `_find_method` walks
+the chain until it finds the method or exhausts the ancestors. `_call_method`
+now receives the `dispatching_class` so it can inject the correct `super`
+proxy — a `MinLangSuper(parent_class, instance)` object that dispatches
+through the parent's method table while keeping `self` bound to the original
+instance. This ensures multi-level `super` chains work correctly.
+
+*`throw`:* a new `MinLangThrow(Exception)` Python exception class wraps the
+thrown MinLang value. `TRY` handling is split: `MinLangThrow` is caught first
+and the `.val` is exposed to the handler unchanged; Python exceptions are
+caught second and stringified as before. Control-flow exceptions (`rt`, `brk`,
+`cnt`) still pass through unaffected.
+
+*`import as`:* `_run_module` creates a fresh child `Environment`, sets
+`__exports__` to an empty list, executes the AST, then builds a
+`MinLangModule(path, exports)` dict from the declared exports (or all names if
+none were declared). `export name` in statement position appends to
+`__exports__`. When a file is run directly (not via `import`), `__exports__`
+is created silently — no error — so module files can be linted or tested
+standalone.
+
+*Bitwise:* six new token types (`OP_IDIV`, `OP_LSHIFT`, `OP_RSHIFT`,
+`OP_BAND`, `OP_BOR`, `OP_BXOR`, `OP_BNOT`) are added to `TOKEN_PATTERNS`
+after `&&` and `||` to avoid ambiguity. Three new parse levels (`parse_bor`,
+`parse_bxor`, `parse_band`) sit between `parse_and` and `parse_compare`.
+`parse_shift` sits between `parse_compare` and `parse_additive`.
+`parse_multiplicative` gains a branch for `OP_IDIV`. `parse_unary` gains a
+branch for `OP_BNOT`. The interpreter evaluates all six operators with Python's
+native bitwise operations (casting operands to `int` first).
+
+```
+## All v1.3 features in one snippet
+
+struct Shape {
+    fn init(color) { self.color = color }
+    fn area()      { rt 0 }
+}
+
+struct Circle extends Shape {
+    fn init(color, r) {
+        super.init(color)
+        self.r = r
+    }
+    fn area() { rt pi * self.r ** 2 }
+    fn str()  { rt f"Circle(r={self.r}, color={self.color})" }
+}
+
+L c = Circle("red", 5)
+ptl c.area()                  ## 78.53...
+ptl instanceof(c, Shape)      ## T
+ptl str(c)                    ## Circle(r=5, color=red)
+
+try {
+    if c.r > 4 { throw "too big" }
+} catch e {
+    ptl f"Caught: {e}"        ## Caught: too big
+}
+
+ptl 100 // 7    ## 14
+ptl 0xFF & 0x0F ## 15
+ptl 1 << 8      ## 256
+```
+
+---
+
 ## File index
 
 ```
@@ -562,7 +769,8 @@ v0.8_minlang.py     — lists, dicts, method calls, f-strings
 ru/v0.9_minlang.py  — Unlisted version: lists, dicts, method calls, f-strings
 v1.0_minlang.py     — standard library and REPL polish
 v1.1_minlang.py     — syntax sugar, safety, and modules
-v1.2_minlang.py     — structs (OOP) and line numbers in errors  ← current
+v1.2_minlang.py     — structs (OOP) and line numbers in errors
+v1.3_minlang.py     — inheritance, typed errors, namespaced modules, bitwise
 ```
 
 ## Usage

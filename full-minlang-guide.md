@@ -87,7 +87,7 @@ python3 minlang.py
 You get an interactive prompt that looks like this:
 
 ```
-MinLang REPL v1.2  |  'q' to quit  |  'help' for reference
+MinLang REPL v1.3  |  'q' to quit  |  'help' for reference
 ────────────────────────────────────────────────────────
 >>>
 ```
@@ -394,6 +394,61 @@ ptl 9 ** 0.5   ## 3.0  (square root via fractional exponent)
 `2 ** (3 ** 2)` = `2 ** 9` = `512`, not `(2 ** 3) ** 2` = `64`.
 
 The `pow(a, b)` built-in function does exactly the same thing — `**` is just shorter.
+
+### Integer division `//`
+
+Regular division `/` always returns a float: `17 / 5` gives `3.4`.
+When you want only the whole-number part, use `//`:
+
+```
+ptl 17 // 5     ## 3    (not 3.4)
+ptl 10 // 3     ## 3
+ptl -7 // 2     ## -4   (rounds toward negative infinity)
+```
+
+This is useful for things like splitting items into groups, converting seconds
+to minutes, or working with grid coordinates:
+
+```
+L seconds = 137
+L minutes = seconds // 60    ## 2
+L remaining = seconds % 60   ## 17
+ptl f"{minutes}m {remaining}s"   ## 2m 17s
+```
+
+### Bitwise operators
+
+Bitwise operators work on the binary representation of integers. They are mainly
+used in low-level programming, flags, masks, and performance-sensitive code.
+
+| Operator | Name | Example | Result |
+|---|---|---|---|
+| `a & b` | AND — bits set in both | `12 & 10` | `8` |
+| `a \| b` | OR — bits set in either | `8 \| 4` | `12` |
+| `a ^ b` | XOR — bits set in one but not both | `15 ^ 9` | `6` |
+| `~a` | NOT — flip all bits | `~5` | `-6` |
+| `a << n` | Left shift — multiply by 2ⁿ | `1 << 4` | `16` |
+| `a >> n` | Right shift — divide by 2ⁿ | `256 >> 3` | `32` |
+
+```
+ptl 8 & 12      ## 8   (1000 & 1100 = 1000)
+ptl 8 | 4       ## 12  (1000 | 0100 = 1100)
+ptl 1 << 4      ## 16  (shift left 4 positions = multiply by 16)
+ptl 256 >> 3    ## 32  (shift right 3 positions = divide by 8)
+ptl ~5          ## -6
+```
+
+A common use — checking and setting flags with `&` and `|`:
+
+```
+L READ  = 1   ## 001
+L WRITE = 2   ## 010
+L EXEC  = 4   ## 100
+
+L perms = READ | WRITE   ## 011 = 3
+ptl perms & READ   ## 1 — READ is set
+ptl perms & EXEC   ## 0 — EXEC is not set
+```
 
 ### Order of operations
 
@@ -1694,6 +1749,70 @@ fn example() {
 ptl example()    ## 42
 ```
 
+### Throwing errors yourself — `throw`
+
+`throw` lets you signal an error from your own code. You can throw any value —
+a string, a number, or a struct instance:
+
+```
+fn divide(a, b) {
+    if b == 0 {
+        throw "cannot divide by zero"
+    }
+    rt a / b
+}
+
+try {
+    ptl divide(10, 0)
+} catch e {
+    ptl f"Error: {e}"    ## Error: cannot divide by zero
+}
+```
+
+The real power of `throw` is **typed errors** — throw a struct instance so
+the handler can inspect it properly:
+
+```
+struct ValueError {
+    fn init(msg) {
+        self.msg  = msg
+        self.code = 400
+    }
+    fn str() { rt f"ValueError: {self.msg}" }
+}
+
+struct NotFoundError {
+    fn init(resource) {
+        self.resource = resource
+        self.code = 404
+    }
+}
+
+fn findUser(users, id) {
+    lp user in users {
+        if user.id == id { rt user }
+    }
+    throw NotFoundError(id)
+}
+
+try {
+    findUser([], 42)
+} catch e {
+    if instanceof(e, NotFoundError) {
+        ptl f"User {e.resource} not found."
+    } el {
+        ptl f"Unexpected error: {e}"
+    }
+}
+```
+
+This gives you the same kind of structured error handling you'd find in
+Python or JavaScript. Throw errors for conditions that should not be silently
+ignored; use `try/catch` to handle them in the right place.
+
+`throw` can also be used outside a `try` block — the error will propagate up
+the call stack until something catches it, or the program stops with an error.
+
 ---
 
 ## 15. Structs — grouping data and behaviour together
@@ -1948,14 +2067,119 @@ acc.withdraw(1000)    ## Insufficient funds.
 ptl str(acc)          ## Account(Alice, £600)
 ```
 
+### Inheritance — building on existing structs
+
+When several structs share common behaviour, you can put the shared parts in
+a **parent struct** and have the others **extend** it. The child inherits all
+of the parent's methods automatically.
+
+```
+struct Animal {
+    fn init(name) {
+        self.name = name
+    }
+    fn describe() {
+        ptl f"I am {self.name}."
+    }
+    fn speak() {
+        ptl "..."
+    }
+}
+
+struct Dog extends Animal {
+    fn init(name, breed) {
+        super.init(name)    ## call the parent's init
+        self.breed = breed
+    }
+    fn speak() {            ## override the parent's speak
+        ptl f"Woof! I am {self.name}."
+    }
+}
+
+L d = Dog("Rex", "Labrador")
+d.speak()       ## Woof! I am Rex.
+d.describe()    ## I am Rex.  ← inherited from Animal, no need to rewrite
+ptl d.breed     ## Labrador
+```
+
+The `Dog` struct does not define `describe` — it is found on `Animal` and
+called automatically. Only `speak` is overridden with a Dog-specific version.
+
+#### `super` — calling the parent's version
+
+Inside a child method, `super.method(args)` calls the same-named method from
+the parent struct. This is most commonly used in `init` to let the parent set
+up its attributes before the child adds its own:
+
+```
+struct Vehicle {
+    fn init(make, year) {
+        self.make = make
+        self.year = year
+    }
+    fn info() {
+        rt f"{self.year} {self.make}"
+    }
+}
+
+struct Car extends Vehicle {
+    fn init(make, year, doors) {
+        super.init(make, year)    ## Vehicle sets self.make and self.year
+        self.doors = doors        ## Car adds self.doors
+    }
+    fn info() {
+        rt f"{super.info()}, {self.doors} doors"   ## extend parent's output
+    }
+}
+
+L c = Car("Toyota", 2023, 4)
+ptl c.info()    ## 2023 Toyota, 4 doors
+```
+
+You can chain as many levels as you like. Each struct only needs to describe
+what is **different** about it.
+
+#### `instanceof` checks the full chain
+
+When you use inheritance, `instanceof` checks not just the direct type but
+every ancestor:
+
+```
+L d = Dog("Rex", "Lab")
+
+ptl instanceof(d, Dog)      ## T — directly
+ptl instanceof(d, Animal)   ## T — Dog extends Animal
+ptl className(d)            ## "Dog" — always the concrete type
+```
+
+This is useful when a function should accept any Animal, regardless of which
+specific kind it is:
+
+```
+fn makeSpeak(animal) {
+    if instanceof(animal, Animal) {
+        animal.speak()
+    } el {
+        ptl "not an animal"
+    }
+}
+
+makeSpeak(Dog("Rex", "Lab"))     ## Woof! I am Rex.
+makeSpeak(Animal("Thing"))       ## ...
+```
+
 ---
 
 ## 16. Modules — splitting code across files
 
-`use` runs another `.minl` file and makes everything it defines available
-in the current program. This lets you split a large project across multiple files.
+MinLang has two ways to load code from another file: `use` (simple, shared
+scope) and `import as` (isolated, namespaced). Both let you split a large
+project across multiple files.
 
-### Basic usage
+### `use` — run a file in the current scope
+
+`use` executes another `.minl` file and makes everything it defines available
+directly in the calling program, as if you had written the code inline.
 
 **utils.minl:**
 ```
@@ -1976,8 +2200,76 @@ ptl clamp(150, 0, 100)     ## 100
 ptl lerp(0, 100, 0.25)     ## 25
 ```
 
-All functions and variables defined in the imported file become available
-immediately after the `use` line.
+All functions and variables defined in the file become available immediately
+after the `use` line. There is no separation — every name from the file lands
+directly in your scope.
+
+### `import as` — isolated namespace
+
+`import "file.minl" as name` runs the file in its own isolated environment
+and binds the result to an alias. Names from the module do **not** appear
+in your scope — you access them through the alias with dot notation.
+
+**math_utils.minl:**
+```
+fn square(x) { rt x * x }
+fn cube(x)   { rt x * x * x }
+L PI = 3.14159
+
+export square
+export cube
+export PI
+```
+
+**main.minl:**
+```
+import "math_utils.minl" as math
+
+ptl math.square(5)   ## 25
+ptl math.cube(3)     ## 27
+ptl math.PI          ## 3.14159
+```
+
+The alias `math` is just a regular variable — you can pass it around, store
+it in a list, or use it in an f-string.
+
+### `export` — controlling what a module exposes
+
+Inside a module file, `export name` marks a specific name for export. Only
+exported names are accessible through the alias.
+
+```
+## geometry.minl
+fn circleArea(r) { rt pi * r * r }
+fn _helper(x) { rt x * 2 }   ## internal — not exported
+
+L VERSION = "2.0"
+
+export circleArea
+export VERSION
+## _helper is NOT exported
+```
+
+If you write **no** `export` statements at all, every top-level name in the
+module is exported automatically. This is convenient for small utility files
+where everything is meant to be public.
+
+`export` only works inside module files. When you run a `.minl` file directly
+(not through `import`), `export` statements are silently ignored — this means
+you can lint or test module files standalone without errors.
+
+### Choosing between `use` and `import as`
+
+| | `use "file"` | `import "file" as name` |
+|---|---|---|
+| Names land in | current scope | alias only |
+| Risk of name clash | yes | no |
+| Access syntax | direct: `myFn()` | via alias: `mod.myFn()` |
+| Supports `export` | no | yes |
+
+Use `use` for small helper files where you want its functions to feel like
+built-ins. Use `import as` for larger modules where you want clean separation
+and no chance of names colliding with your own code.
 
 ### Why split into files?
 
@@ -1987,10 +2279,9 @@ immediately after the `use` line.
 
 ### Things to know
 
-- `use` executes the file in the **current scope** — no namespacing or import aliases
-- You can use as many `use` statements as you need
-- The file path is relative to where you run the interpreter from
-- Structs, functions, and variables all carry across
+- File paths are relative to where you run the interpreter from
+- Structs, functions, and variables all carry across with both `use` and `import as`
+- You can use as many `use` and `import` statements as you need
 
 ---
 
@@ -2390,23 +2681,27 @@ fn name(*args) { }       ## variadic — args is a list
 fn(x) { rt x * 2 }       ## anonymous function (lambda)
 
 ## ── STRUCTS ───────────────────────────────────
-struct Dog {
-    fn init(name) {
-        self.name = name    ## store attribute
-    }
-    fn bark() {
-        ptl f"Woof, {self.name}!"
-    }
-    fn str() { rt f"Dog({self.name})" }
+struct Animal {
+    fn init(name) { self.name = name }
+    fn speak()    { rt "..." }
 }
-L d = Dog("Rex")        ## create instance
-d.bark()                ## call method
-ptl d.name              ## read attribute
-d.name = "Max"          ## write attribute  (outside)
-## self.x += 1          ## compound assign  (inside method)
-isObj(d)                ## T
-className(d)            ## "Dog"
-instanceof(d, Dog)      ## T
+struct Dog extends Animal {      ## inheritance
+    fn init(name, breed) {
+        super.init(name)         ## call parent init
+        self.breed = breed
+    }
+    fn speak() { rt f"Woof, {self.name}!" }
+    fn str()   { rt f"Dog({self.name})" }
+}
+L d = Dog("Rex", "Lab")  ## create instance
+d.speak()                ## call method
+ptl d.name               ## read attribute
+d.name = "Max"           ## write attribute  (outside)
+## self.x += 1           ## compound assign  (inside method)
+isObj(d)                 ## T
+className(d)             ## "Dog"
+instanceof(d, Dog)       ## T
+instanceof(d, Animal)    ## T  (walks inheritance chain)
 
 ## ── ERROR HANDLING ───────────────────────────
 try {
@@ -2414,9 +2709,16 @@ try {
 } catch e {
     ptl e
 }
+throw "something went wrong"   ## throw a string
+throw MyError("bad input")     ## throw a struct instance
 
 ## ── MODULES ──────────────────────────────────
-use "utils.minl"           ## run file in current scope
+use "utils.minl"               ## run file in current scope
+import "utils.minl" as utils   ## isolated namespace
+utils.myFunc()                 ## call via alias
+utils.myVar                    ## read variable via alias
+## inside a module file:
+export myFunc                  ## mark name for export
 
 ## ── TYPES ────────────────────────────────────
 T  F  nil             ## true, false, null
@@ -2425,9 +2727,11 @@ T  F  nil             ## true, false, null
 
 ## ── OPERATORS ────────────────────────────────
 + - * / %             ## arithmetic
+//                    ## integer division  (17 // 5 → 3)
 **                    ## power (right-associative)
 == != < > <= >=       ## comparison
 &&  ||  !             ## logical
+&  |  ^  ~  <<  >>    ## bitwise
 
 ## ── SLICES ───────────────────────────────────
 lst[2:5]   lst[:3]   lst[7:]   ## lists
@@ -2438,7 +2742,7 @@ obj?.method()         ## nil if obj is nil
 obj?.attr             ## nil if obj is nil
 
 ## ── MATH ─────────────────────────────────────
-+ - * / %  **  pow(a,b)  sqrt(x)  abs(x)
++ - * / % // **  pow(a,b)  sqrt(x)  abs(x)
 floor(x)  ceil(x)  rnd(x, 2)  max(a,b)  min(a,b)
 log(x)  sin(x)  cos(x)  tan(x)
 fmt(x, ".2f")         ## format number to string
@@ -2480,4 +2784,7 @@ read("file.txt")
 write("file.txt", "content")
 append("file.txt", "more content")
 exists("file.txt")
+
+## ── SYSTEM ───────────────────────────────────
+sysArgs()  sysEnv("VAR")  exit(0)
 ```
