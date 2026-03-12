@@ -1,7 +1,7 @@
 # MinLang — Language Reference
 
 Minimalist programming language. Maximum power, minimum keystrokes.  
-Source files use the `.ll` extension.
+Source files use the `.minl` extension.
 
 ---
 
@@ -9,7 +9,7 @@ Source files use the `.ll` extension.
 
 ### Run a file
 ```bash
-python minlang.py program.ll
+python minlang.py program.minl
 ```
 
 ### Interactive REPL
@@ -26,7 +26,7 @@ python "C:\full\path\to\minlang.py" %*
 ```
 Now you can just type:
 ```
-minlang program.ll
+minlang program.minl
 ```
 
 ### Build a standalone `.exe` (no Python required on the target machine)

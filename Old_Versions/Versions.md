@@ -1,6 +1,6 @@
 # MinLang
 
-MinLang is a minimalist programming language with a `.ll` file extension.
+MinLang is a minimalist programming language with a `.minl` file extension.
 Maximum expressive power, minimum keystrokes.
 
 This repository tracks the full development history of the interpreter —
@@ -15,7 +15,7 @@ and a standard library.
 Every version of the interpreter follows the same three-stage pipeline:
 
 ```
-Source code (.ll)
+Source code (.minl)
       │
       ▼
   Tokenizer  ── splits raw text into a flat list of tokens
@@ -365,18 +365,18 @@ L result = toInt("abc")   ## nil
 ptl result?.len()          ## nil — no crash
 ```
 
-#### Module system `use "file.ll"`
-Executes another `.ll` file in the **current scope**, making all its
+#### Module system `use "file.minl"`
+Executes another `.minl` file in the **current scope**, making all its
 functions and variables available to the caller. This is intentionally
 simple: no namespacing, no import aliases — just a clean way to split
 a large program into files.
 
 ```
-## utils.ll
+## utils.minl
 fn clamp(x, lo, hi) { rt x < lo ? lo : (x > hi ? hi : x) }
 
-## main.ll
-use "utils.ll"
+## main.minl
+use "utils.minl"
 ptl clamp(150, 0, 100)   ## 100
 ```
 
@@ -438,7 +438,7 @@ v1.1_minlang.py   — syntax sugar, safety, and modules  ← current
 
 ```bash
 # Run a source file
-python minlang.py program.ll
+python minlang.py program.minl
 
 # Interactive REPL (v0.5 and later)
 python minlang.py

@@ -1,7 +1,7 @@
 # MinLang — How the Interpreter Works
 
 This document explains what happens inside `minlang.py` from the moment
-you type `python minlang.py program.ll` to the moment output appears on screen.
+you type `python minlang.py program.minl` to the moment output appears on screen.
 
 ---
 
@@ -10,7 +10,7 @@ you type `python minlang.py program.ll` to the moment output appears on screen.
 Every interpreter (and compiler) does the same three jobs, in order:
 
 ```
-Source text  (.ll file)
+Source text  (.minl file)
      │
      ▼  Stage 1 — TOKENIZER
      │
@@ -317,7 +317,7 @@ continues (especially useful in the REPL).
 ## Summary
 
 ```
-minlang.py program.ll
+minlang.py program.minl
     │
     ├─ open file, read source text
     │

@@ -46,7 +46,7 @@ Think of it like a recipe:
 ```
 
 A MinLang program is exactly the same idea — just written in a language the computer
-understands. You write the steps, save them in a file that ends in `.ll`, and then
+understands. You write the steps, save them in a file that ends in `.minl`, and then
 run them.
 
 The computer doesn't think. It doesn't guess. It does **exactly** what you wrote —
@@ -64,14 +64,14 @@ You need two things:
 
 ### Running a program file
 
-Create a text file, name it something like `hello.ll`, write your code inside it,
+Create a text file, name it something like `hello.minl`, write your code inside it,
 then open a terminal and type:
 
 ```bash
-python3 minlang.py hello.ll
+python3 minlang.py hello.minl
 ```
 
-The computer reads your `.ll` file and executes every line.
+The computer reads your `.minl` file and executes every line.
 
 ### The interactive mode (REPL)
 
@@ -1327,7 +1327,7 @@ append("log.txt", "\nNew line added")
 
 ```
 ## Get command-line arguments (values typed after the filename when running)
-## Example: python3 minlang.py program.ll Alice 30
+## Example: python3 minlang.py program.minl Alice 30
 L args = sysArgs()
 ## args = ["Alice", "30"]
 
@@ -1909,13 +1909,13 @@ ptl user?.score?.fmt()  ## nil — the whole chain short-circuits
 
 ---
 
-### Module system — `use "file.ll"`
+### Module system — `use "file.minl"`
 
-`use` runs another `.ll` file and makes everything it defines available
+`use` runs another `.minl` file and makes everything it defines available
 in the current program. This lets you split a large program across multiple
 files.
 
-**utils.ll:**
+**utils.minl:**
 ```
 fn clamp(x, lo, hi) {
     rt x < lo ? lo : (x > hi ? hi : x)
@@ -1926,9 +1926,9 @@ fn lerp(a, b, t) {
 }
 ```
 
-**main.ll:**
+**main.minl:**
 ```
-use "utils.ll"
+use "utils.minl"
 
 ptl clamp(150, 0, 100)     ## 100
 ptl lerp(0, 100, 0.25)     ## 25.0
@@ -1991,7 +1991,7 @@ try {
 }
 
 ## ── MODULES ──────────────────────────────────
-use "utils.ll"           ## run file in current scope
+use "utils.minl"           ## run file in current scope
 
 ## ── TYPES ────────────────────────────────────
 T  F  nil             ## true, false, null
