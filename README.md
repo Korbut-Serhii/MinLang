@@ -2,6 +2,7 @@
 
 Minimalist programming language. Maximum power, minimum keystrokes.  
 Source files use the `.minl` extension.
+- VScode extension (beta) available on https://github.com/Korbut-Serhii/minlang-vscode-extension
 
 ---
 
