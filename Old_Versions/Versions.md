@@ -554,14 +554,15 @@ ptl className(v1)         ## Vector2
 ## File index
 
 ```
-v0.1_minlang.py   — variables and print
-v0.2_minlang.py   — arithmetic expressions
-v0.3_minlang.py   — conditionals and boolean logic
-v0.5_minlang.py   — loops, functions, lexical scoping
-v0.8_minlang.py   — lists, dicts, method calls, f-strings
-v1.0_minlang.py   — standard library and REPL polish
-v1.1_minlang.py   — syntax sugar, safety, and modules
-v1.2_minlang.py   — structs (OOP) and line numbers in errors  ← current
+v0.1_minlang.py     — variables and print
+v0.2_minlang.py     — arithmetic expressions
+v0.3_minlang.py     — conditionals and boolean logic
+v0.5_minlang.py     — loops, functions, lexical scoping
+v0.8_minlang.py     — lists, dicts, method calls, f-strings
+ru/v0.9_minlang.py  — Unlisted version: lists, dicts, method calls, f-strings
+v1.0_minlang.py     — standard library and REPL polish
+v1.1_minlang.py     — syntax sugar, safety, and modules
+v1.2_minlang.py     — structs (OOP) and line numbers in errors  ← current
 ```
 
 ## Usage

@@ -8,7 +8,7 @@
 
 ### Вариант 1 — через Python (для разработки)
 ```bash
-python3 minlang.py program.ml     # запустить файл
+python3 minlang.py program.minl     # запустить файл
 python3 minlang.py                # интерактивный REPL
 ```
 
@@ -19,7 +19,7 @@ python3 minlang.py                # интерактивный REPL
 @echo off
 python3 "C:\полный\путь\к\minlang.py" %*
 ```
-Теперь можно писать просто: `minlang program.ml`
+Теперь можно писать просто: `minlang program.minl`
 
 ### Вариант 3 — .exe без Python (для дистрибуции)
 ```bash
