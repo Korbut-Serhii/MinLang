@@ -6,6 +6,57 @@ Source files use the `.minl` extension.
 
 ---
 
+## Project Structure
+
+```
+MinLang/
+│
+├── Dev/
+│   └──  minlang.py             # Dev Unstable version
+│
+├── Examples/                   # Examples of code. And test versions
+│   ├──  caesar.minl            
+│   ├──  calculator.minl        
+│   ├──  contacts.minl          
+│   ├──  game.minl              
+│   ├──  sort.minl              
+│   ├──  test.minl              
+│   ├──  todo-list.minl         
+│   ├──  v1_test.minl           
+│   ├──  v01_test.minl          
+│   ├──  v1.4_test.minl         
+│   ├──  v1.4_debug.minl        
+│   ├──  v02_test.minl          
+│   ├──  v03_test.minl          
+│   ├──  v05_test.minl          
+│   └──  v08_test.minl          
+│
+├── Old_versions/               # Here is old versions of MinLang Interpreter
+│   ├──  ru/
+│   │   ├──  calculator.minl    # Calculator on old version
+│   │   ├──  examples.minl      # Examples what language already could do on v0.9
+│   │   ├──  README.md          # Small russian documentation, may be not accurate with latest versions
+│   │   └──  v0.9_minlang.py    # Interpreter with russian language
+│   ├──  v0.1_minlang.py        
+│   ├──  v0.2_minlang.py        
+│   ├──  v0.3_minlang.py        
+│   ├──  v0.5_minlang.py        
+│   ├──  v0.8_minlang.py        
+│   ├──  v1.0_minlang.py        
+│   ├──  v1.1_minlang.py        
+│   ├──  v1.2_minlang.py        
+│   ├──  v1.3_minlang.py        
+│   ├──  v1.4_minlang.py        
+│   └──  Version.md             # Explication of versions and their differences
+│
+├── Stable_version/
+│   └──  minlang.py             # Stable version, which is described in the documentations
+│   
+├── full-minlang-guide.md       # Full MinLang guide from beginer to senior, with examples, explanations and cheat sheet
+├── INTERPRETER.md              # Explication of how the interpreter works, how to build it and how to contribute       
+└── README.md                   # Project overview and documentation
+```
+
 ## Installation & Running
 
 ### Run a file
