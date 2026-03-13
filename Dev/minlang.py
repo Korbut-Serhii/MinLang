@@ -1,22 +1,7 @@
 """
-MinLang Interpreter — v1.3
+MinLang Interpreter — bt-v1.3.3
 A minimalist programming language. Maximum power, minimum keystrokes.
 Source files use the .minl extension.
-
-New in v1.3:
-    ✦ Struct inheritance:   struct Cat extends Animal { ... }
-    ✦ super keyword:        super.method(args)  inside child methods
-    ✦ instanceof hierarchy: instanceof(cat, Animal) → T  (walks chain)
-    ✦ Module namespaces:    import "utils.minl" as utils
-                            utils.myFunc()  /  utils.myVar
-    ✦ export keyword:       export myFunc   (inside module file)
-                            (if no exports declared → all names exported)
-    ✦ throw / typed errors: throw "oops"
-                            throw MyError("msg")   (any value)
-                            try { } catch e { }    e holds the thrown value
-    ✦ Integer division:     17 // 5  → 3
-    ✦ Bitwise operators:    & | ^ ~ << >>
-    ✦ Deep recursion:       Python recursion limit raised to 10 000
 
 Architecture:
     Source code (.minl file)
@@ -36,6 +21,7 @@ import sys
 import re
 import math
 import os
+import math as _math
 
 # Raise Python's recursion limit so MinLang programs can recurse deeper.
 # Each MinLang call uses ~8 internal Python frames, so we multiply accordingly.
@@ -499,6 +485,51 @@ class Parser:
         self.expect('IDENT', 'catch')
         err_var = self.expect('IDENT')[1]
         return ('TRY', body, err_var, self.parse_block())
+    
+    def parse_do_while(self):
+        self.advance()  # 'do'
+        body = self.parse_block()
+        self.skip_newlines()
+        self.expect('IDENT', 'wh')
+        return ('DO_WHILE', body, self.parse_expr())
+
+    def parse_switch(self):
+        self.advance()  # 'sw'
+        subject = self.parse_expr()
+        self.expect('LBRACE')
+        cases, default = [], None
+        while True:
+            self.skip_newlines()
+            if self.current()[0] == 'RBRACE': self.advance(); break
+            if self.current()[1] == 'cs':
+                self.advance()
+                values = [self.parse_expr()]
+                while self.current()[0] == 'COMMA':
+                    self.advance(); values.append(self.parse_expr())
+                cases.append((values, self.parse_block()))
+            elif self.current()[1] == 'df':
+                self.advance(); default = self.parse_block()
+        return ('SWITCH', subject, cases, default)
+
+    def parse_assert(self):
+        self.advance()  # 'assert'
+        cond = self.parse_expr()
+        msg = None
+        if self.current()[0] == 'COMMA':
+            self.advance(); msg = self.parse_expr()
+        return ('ASSERT', cond, msg)
+
+    def parse_from_import(self):
+        self.advance()  # 'from'
+        path = self.parse_expr()
+        self.expect('IDENT', 'import')
+        self.expect('LBRACE')
+        names = []
+        while self.current()[0] != 'RBRACE':
+            names.append(self.expect('IDENT')[1])
+            if self.current()[0] == 'COMMA': self.advance()
+        self.expect('RBRACE')
+        return ('FROM_IMPORT', path, names)
 
     def parse_struct(self):
         """
@@ -563,7 +594,7 @@ class Parser:
         return self.parse_ternary()
 
     def parse_ternary(self):
-        cond = self.parse_or()
+        cond = self.parse_nullco()
         if self.current()[0] == 'QMARK':
             self.advance()
             true_val  = self.parse_or()
@@ -571,6 +602,13 @@ class Parser:
             false_val = self.parse_or()
             return ('TERNARY', cond, true_val, false_val)
         return cond
+    
+    def parse_nullco(self):
+        left = self.parse_or()
+        while self.current()[0] == 'OP_NULLCO':
+            self.advance()
+            left = ('BINOP', '??', left, self.parse_or())
+        return left
 
     def parse_or(self):
         left = self.parse_and()
@@ -615,6 +653,10 @@ class Parser:
         left = self.parse_shift()
         while self.current()[0] in ('OP_EQ', 'OP_NEQ', 'OP_LTE', 'OP_GTE', 'OP'):
             op = self.current()[1]
+            if self.current()[0] == 'IDENT' and self.current()[1] == 'in':
+                self.advance()
+                left = ('BINOP', 'in', left, self.parse_shift())
+                continue
             if op in ('==', '!=', '<=', '>=', '<', '>'):
                 self.advance()
                 left = ('BINOP', op, left, self.parse_shift())
@@ -817,6 +859,8 @@ class Parser:
             items = []
             while self.current()[0] != 'RBRACKET':
                 items.append(self.parse_expr())
+                if self.current()[0] == 'SPREAD':
+                    self.advance(); items.append(('SPREAD_ITEM', self.parse_expr()))
                 if self.current()[0] == 'COMMA':
                     self.advance()
             self.expect('RBRACKET')
@@ -830,6 +874,8 @@ class Parser:
                 self.expect('COLON')
                 val = self.parse_expr()
                 pairs.append((key, val))
+                if self.current()[0] == 'SPREAD':
+                    self.advance(); pairs.append(('SPREAD_PAIR', self.parse_expr()))
                 if self.current()[0] == 'COMMA':
                     self.advance()
             self.expect('RBRACE')
@@ -902,12 +948,13 @@ class Environment:
 
 class Function:
     """A first-class MinLang function value (closure)."""
-    def __init__(self, name, params, body, env, variadic=None):
+    def __init__(self, name, params, body, env, variadic=None, defaults=None):
         self.name     = name
         self.params   = params    # list of regular param names
         self.body     = body      # BLOCK AST node
         self.env      = env       # closure: scope at definition time
-        self.variadic = variadic  # name of *args param, or None
+        self.variadic = variadic  # name of *args param, or None\
+        self.defaults = defaults or {}
 
     def __repr__(self):
         return f"<fn {self.name}>"
@@ -984,6 +1031,15 @@ class Interpreter:
         e = self.global_env
 
         # Math
+        e.set('asin',  lambda a: _math.asin(a[0]))
+        e.set('acos',  lambda a: _math.acos(a[0]))
+        e.set('atan',  lambda a: _math.atan(a[0]))
+        e.set('atan2', lambda a: _math.atan2(a[0], a[1]))
+        e.set('hypot', lambda a: _math.hypot(*a))
+        e.set('gcd',   lambda a: _math.gcd(int(a[0]), int(a[1])))
+        e.set('lcm',   lambda a: _math.lcm(int(a[0]), int(a[1])))
+        e.set('trunc', lambda a: math.trunc(a[0]))
+        e.set('sign',  lambda a: (1 if a[0] > 0 else -1 if a[0] < 0 else 0))
         e.set('sqrt',  lambda a: math.sqrt(a[0]))
         e.set('abs',   lambda a: abs(a[0]))
         e.set('pow',   lambda a: a[0] ** a[1])
@@ -1147,8 +1203,10 @@ class Interpreter:
 
         elif isinstance(fn, Function):
             env = Environment(fn.env)
-            for param, arg in zip(fn.params, args):
-                env.set(param, arg)
+            for i, param in enumerate(fn.params):
+                env.set(param, args[i] if i < len(args) else
+                        self.eval(fn.defaults[param], fn.env) if param in fn.defaults
+                        else None)
             if fn.variadic is not None:
                 env.set(fn.variadic, list(args[len(fn.params):]))
             try:
@@ -1355,8 +1413,8 @@ class Interpreter:
                     continue
 
         elif kind == 'FUNCDEF':
-            _, name, params, body, variadic = node
-            env.set(name, Function(name, params, body, env, variadic))
+            _, name, params, defaults, body, variadic = node
+            env.set(name, Function(name, params, body, env, variadic, defaults))
 
         elif kind == 'STRUCTDEF':
             # v1.3: node is now ('STRUCTDEF', name, parent_name, method_defs)
@@ -1369,8 +1427,8 @@ class Interpreter:
                         f"'{parent_name}' is not a struct — cannot use as parent"
                     )
             methods = {
-                mname: Function(mname, params, body, env, variadic)
-                for mname, (params, body, variadic) in method_defs.items()
+                mname: Function(mname, params, body, env, variadic, defaults)
+                for mname, (params, defaults, body, variadic) in method_defs.items()
             }
             env.set(name, MinLangClass(name, methods, parent))
 
@@ -1461,6 +1519,40 @@ class Interpreter:
 
         elif kind == 'BLOCK':
             return self.exec_block(node, env)
+        
+        elif kind == 'INC_STMT':
+            env.assign(node[1], env.get(node[1]) + 1)
+        elif kind == 'DEC_STMT':
+            env.assign(node[1], env.get(node[1]) - 1)
+        elif kind == 'DO_WHILE':
+            _, body, cond = node
+            while True:
+                try: self.exec_block(body, Environment(env))
+                except BreakException: break
+                except ContinueException: pass
+                if not self.eval(cond, env): break
+        elif kind == 'SWITCH':
+            _, subject, cases, default = node
+            val = self.eval(subject, env)
+            matched = False
+            for values, body in cases:
+                if any(self.eval(v, env) == val for v in values):
+                    self.exec_block(body, Environment(env)); matched = True; break
+            if not matched and default:
+                self.exec_block(default, Environment(env))
+        elif kind == 'ASSERT':
+            _, cond, msg = node
+            if not self.eval(cond, env):
+                m = self.to_str(self.eval(msg, env)) if msg else "assertion failed"
+                raise RuntimeError(f"AssertionError: {m}")
+        elif kind == 'FROM_IMPORT':
+            _, path_node, names = node
+            path = self.eval(path_node, env)
+            src = open(path, encoding='utf-8').read()
+            mod = self._run_module(src, path)
+            for n in names:
+                if n not in mod.exports: raise NameError(f"Module '{path}' has no export '{n}'")
+                env.set(n, mod.exports[n])
 
     # ── Expression evaluator ──────────────────────────────────────
 
@@ -1488,10 +1580,18 @@ class Interpreter:
             return Function('<lambda>', params, body, env, variadic)
 
         if kind == 'LIST':
-            return [self.eval(item, env) for item in node[1]]
+            result = []
+            for item in node[1]:
+                if item[0] == 'SPREAD_ITEM': result.extend(self.eval(item[1], env))
+                else: result.append(self.eval(item, env))
+            return result
 
         if kind == 'DICT':
-            return {self.eval(k, env): self.eval(v, env) for k, v in node[1]}
+            result = {}
+            for pair in node[1]:
+                if pair[0] == 'SPREAD_PAIR': result.update(self.eval(pair[1], env))
+                else: result[self.eval(pair[0], env)] = self.eval(pair[1], env)
+            return result
 
         # ── Ternary: cond ? a : b ─────────────────────────────────
         if kind == 'TERNARY':
@@ -1523,6 +1623,8 @@ class Interpreter:
             if op == '^':   return int(lv) ^  int(rv)
             if op == '<<':  return int(lv) << int(rv)
             if op == '>>':  return int(lv) >> int(rv)
+            if op == '??':  return lv if lv is not None else rv
+            if op == 'in':  return lv in rv
 
         # ── Unary operations ──────────────────────────────────────
         if kind == 'UNOP':
@@ -1676,6 +1778,15 @@ class Interpreter:
         if method == 'get':    return obj.get(args[0], args[1] if len(args) > 1 else None)
         if method == 'del':    obj.pop(args[0], None); return obj
         if method == 'merge':  return {**obj, **args[0]}
+
+        if method == 'padL':   return obj.rjust(args[0], args[1] if len(args)>1 else ' ')
+        if method == 'padR':   return obj.ljust(args[0], args[1] if len(args)>1 else ' ')
+        if method == 'repeat': return obj * int(args[0])
+        if method == 'chars':  return list(obj)
+        if method == 'lstrip': return obj.lstrip(args[0] if args else None)
+        if method == 'rstrip': return obj.rstrip(args[0] if args else None)
+        if method == 'isNum':  return obj.isnumeric()
+        if method == 'isAlpha':return obj.isalpha()
 
         raise AttributeError(f"Unknown method: '{method}'")
 
