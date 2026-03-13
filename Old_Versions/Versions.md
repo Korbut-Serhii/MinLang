@@ -758,6 +758,196 @@ ptl 1 << 8      ## 256
 
 ---
 
+### v1.4 — Syntax completion: control flow, safety, and spread
+
+**File:** `minlang.py`
+
+A broad quality-of-life release that fills in the remaining gaps in the language's
+control flow, function model, operator set, and standard library.
+No breaking changes — all existing v1.3 code runs unchanged.
+
+**What's new:**
+
+#### `x++` / `x--` — increment and decrement
+Statement-level shorthand for `x += 1` and `x -= 1`. Works on any numeric variable.
+
+```
+L n = 0
+n++      ## n = 1
+n++      ## n = 2
+n--      ## n = 1
+```
+
+#### `??` nil-coalescing operator
+`a ?? b` returns `a` if it is not `nil`, otherwise returns `b`.
+Chains are right-associative: `a ?? b ?? c` tries `a`, then `b`, then `c`.
+
+```
+L name = nil
+ptl name ?? "Guest"    ## Guest
+ptl 0 ?? 99            ## 0  (0 is not nil)
+```
+
+#### `in` operator
+`x in collection` returns `T` if `x` is found in a list, dict key set, or string.
+Composes naturally with `if` and `wh`.
+
+```
+ptl 3 in [1, 2, 3]     ## T
+ptl "name" in person   ## T  (dict key check)
+ptl "ell" in "hello"   ## T
+```
+
+#### `do { } wh cond` — do-while loop
+Runs the body first, then checks the condition. Guarantees at least one execution.
+
+```
+L i = 0
+do { i++ } wh i < 5    ## i = 5
+```
+
+#### `sw` / `cs` / `df` — switch statement
+Multi-way branching on a single value. Each `cs` can match one or more values.
+`df` is the optional default branch. No fallthrough between cases.
+
+```
+sw day {
+    cs 1, 7 { ptl "weekend" }
+    cs 2, 3, 4, 5, 6 { ptl "weekday" }
+    df { ptl "unknown" }
+}
+```
+
+#### Default function parameters
+Parameters can be given a default value with `=`. The default is used when
+the caller omits that argument. Works for named functions and lambdas.
+
+```
+fn greet(name="World") {
+    ptl f"Hello, {name}!"
+}
+greet()          ## Hello, World!
+greet("Alice")   ## Hello, Alice!
+```
+
+#### `finally` block in `try / catch`
+Code in `finally { }` runs whether or not an error occurred — even when `catch`
+is triggered. Ideal for cleanup operations such as closing files or resetting state.
+
+```
+try {
+    riskyOperation()
+} catch e {
+    ptl f"Error: {e}"
+} finally {
+    ptl "always runs"
+}
+```
+
+#### `assert expr [, msg]`
+Asserts that an expression is true. If it is false, throws an `AssertionError`.
+An optional message string is appended to the error.
+
+```
+assert x > 0, "x must be positive"
+```
+
+#### `from "file" import { a, b }` — selective import
+Imports specific names from a module file directly into the current scope,
+without needing to use an alias. The names behave exactly as if defined locally.
+
+```
+from "math_utils.minl" import { square, cube }
+ptl square(5)   ## 25  — no alias prefix needed
+```
+
+#### Spread operator `...`
+`...expr` inside a list literal expands the list in-place.
+Inside a dict literal it merges all key-value pairs.
+
+```
+L a = [1, 2, 3]
+L b = [...a, 4, 5]      ## [1, 2, 3, 4, 5]
+
+L d1 = {"x": 1}
+L d2 = {"y": 2}
+L m  = {...d1, ...d2}   ## {x: 1, y: 2}
+```
+
+#### New math built-ins
+`trunc(x)` · `sign(x)` · `gcd(a,b)` · `lcm(a,b)` · `hypot(a,b)`
+`asin(x)` · `acos(x)` · `atan(x)` · `atan2(y,x)`
+
+#### New string methods
+`s.padL(n)` · `s.padL(n, ch)` · `s.padR(n)` · `s.padR(n, ch)`
+`s.repeat(n)` · `s.chars()` · `s.lstrip()` · `s.rstrip()`
+`s.isNum()` · `s.isAlpha()`
+
+**Design notes:**
+
+*Tokenizer:* four new token types added to `TOKEN_PATTERNS` in order-sensitive
+positions — `INC` (`++`) and `DEC` (`--`) before `PLUS_ASSIGN`/`MINUS_ASSIGN`;
+`OP_NULLCO` (`??`) before `QMARK`; `SPREAD` (`...`) before `DOT`.
+
+*`parse_fn`:* updated to return a six-element tuple
+`('FUNCDEF', name, params, defaults, body, variadic)`. `parse_primary`'s lambda
+branch receives the same treatment. `parse_struct` unpacks the new format.
+
+*`parse_statement`:* dispatch added for `do`, `sw`, `assert`, and `from`
+keywords; `INC`/`DEC` checks added to the IDENT branch.
+
+*`parse_compare`:* rewritten with a `while True:` loop so the `in` keyword
+(an `IDENT` token) is checked alongside the operator tokens.
+
+*`parse_nullco`:* new parse level inserted between `parse_ternary` and
+`parse_or`, right-associative via recursion.
+
+*`parse_primary` spread:* spread check is performed **before** the regular
+expression, so `[...a, 1]` produces `SPREAD_ITEM` nodes, not regular items.
+
+*`parse_try`:* now returns a five-element tuple with an optional `finally_block`.
+`exec_stmt`'s `TRY` handler wraps execution in Python `try/finally`.
+
+*`_call_fn`:* iterates `fn.defaults` and evaluates each default expression in the
+function's closure environment if the caller did not supply that argument.
+
+```
+## All v1.4 features in one snippet
+
+fn describe(item, prefix="Item") {
+    rt f"{prefix}: {item}"
+}
+
+L tags = ["sale", "new"]
+L extra = ["hot"]
+L all_tags = [...tags, ...extra]
+
+lp tag in all_tags {
+    ptl describe(tag)
+}
+
+L raw = nil
+ptl raw ?? "unknown"    ## unknown
+
+L n = 1
+do { n++ } wh n < 4    ## n = 4
+
+sw n {
+    cs 4 { ptl "four" }
+    df   { ptl "other" }
+}
+
+try {
+    assert n == 4, "expected 4"
+} catch e {
+    ptl e
+} finally {
+    ptl "done"
+}
+```
+
+---
+
 ## File index
 
 ```
@@ -771,6 +961,7 @@ v1.0_minlang.py     — standard library and REPL polish
 v1.1_minlang.py     — syntax sugar, safety, and modules
 v1.2_minlang.py     — structs (OOP) and line numbers in errors
 v1.3_minlang.py     — inheritance, typed errors, namespaced modules, bitwise
+v1.4_minlang.py     — control flow, safety, spread, new builtins
 ```
 
 ## Usage

@@ -1,22 +1,7 @@
 """
-MinLang Interpreter — v1.3
+MinLang Interpreter — v1.4
 A minimalist programming language. Maximum power, minimum keystrokes.
 Source files use the .minl extension.
-
-New in v1.3:
-    ✦ Struct inheritance:   struct Cat extends Animal { ... }
-    ✦ super keyword:        super.method(args)  inside child methods
-    ✦ instanceof hierarchy: instanceof(cat, Animal) → T  (walks chain)
-    ✦ Module namespaces:    import "utils.minl" as utils
-                            utils.myFunc()  /  utils.myVar
-    ✦ export keyword:       export myFunc   (inside module file)
-                            (if no exports declared → all names exported)
-    ✦ throw / typed errors: throw "oops"
-                            throw MyError("msg")   (any value)
-                            try { } catch e { }    e holds the thrown value
-    ✦ Integer division:     17 // 5  → 3
-    ✦ Bitwise operators:    & | ^ ~ << >>
-    ✦ Deep recursion:       Python recursion limit raised to 10 000
 
 Architecture:
     Source code (.minl file)
@@ -36,6 +21,7 @@ import sys
 import re
 import math
 import os
+import math as _math
 
 # Raise Python's recursion limit so MinLang programs can recurse deeper.
 # Each MinLang call uses ~8 internal Python frames, so we multiply accordingly.
@@ -80,12 +66,19 @@ TOKEN_PATTERNS = [
     ('OP_AND',       r'&&'),
     ('OP_OR',        r'\|\|'),
 
+    # v1.4: ++ and -- before compound += and single +
+    ('INC',          r'\+\+'),
+    ('DEC',          r'--'),
+
     # Compound assignment (before plain = and plain operators)
     ('PLUS_ASSIGN',  r'\+='),
     ('MINUS_ASSIGN', r'-='),
     ('MUL_ASSIGN',   r'\*='),
     ('DIV_ASSIGN',   r'/='),
     ('MOD_ASSIGN',   r'%='),
+
+    # v1.4: nil-coalescing ?? before plain ?
+    ('OP_NULLCO',    r'\?\?'),
 
     # Logical NOT: ! but NOT !=
     ('OP_NOT',       r'!(?!=)'),
@@ -129,6 +122,8 @@ TOKEN_PATTERNS = [
     ('RBRACKET',     r'\]'),
     ('COMMA',        r','),
     ('COLON',        r':'),
+    # v1.4: spread ... must come before plain dot
+    ('SPREAD',       r'\.\.\.'),
     ('DOT',          r'\.'),
 
     # Newlines kept as tokens
@@ -181,11 +176,6 @@ def tokenize(code):
 #    →  +/-  →  */% //  →  ** (right-assoc)
 #    →  unary (-/!/~)  →  postfix  →  primary
 #
-#  v1.3: tokens are now (type, value, line) triples.
-#        Helper current_line() exposes the line of the current token.
-#        All SyntaxErrors include the offending line number.
-#        Statements in every block are wrapped in SOURCELOC nodes
-#        so the interpreter can track lines at runtime too.
 # ═══════════════════════════════════════════════════════════════
 
 class Parser:
@@ -296,6 +286,19 @@ class Parser:
             self.advance()
             return ('THROW', self.parse_expr())
 
+        # ── v1.4: new statements ──────────────────────────────────────────────
+        if tok[0] == 'IDENT' and tok[1] == 'do':
+            return self.parse_do_while()
+
+        if tok[0] == 'IDENT' and tok[1] == 'sw':
+            return self.parse_switch()
+
+        if tok[0] == 'IDENT' and tok[1] == 'assert':
+            return self.parse_assert()
+
+        if tok[0] == 'IDENT' and tok[1] == 'from':
+            return self.parse_from_import()
+
         # ── struct  →  OOP class definition ──────────────────────
         if tok[0] == 'IDENT' and tok[1] == 'struct':
             return self.parse_struct()
@@ -398,6 +401,14 @@ class Parser:
                 'MOD_ASSIGN':   '%',
             }
 
+            # v1.4: x++ / x--
+            if self.current()[0] == 'INC':
+                self.advance()
+                return ('INC_STMT', tok[1])
+            if self.current()[0] == 'DEC':
+                self.advance()
+                return ('DEC_STMT', tok[1])
+
             # Simple assignment:  x = expr
             if self.current()[0] == 'ASSIGN':
                 self.advance()
@@ -480,17 +491,23 @@ class Parser:
         name     = self.expect('IDENT')[1]
         self.expect('LPAREN')
         params   = []
+        defaults = {}       # v1.4: param_name → default AST node
         variadic = None
         while self.current()[0] != 'RPAREN':
             if self.current()[0] == 'OP' and self.current()[1] == '*':
                 self.advance()
                 variadic = self.expect('IDENT')[1]
             else:
-                params.append(self.expect('IDENT')[1])
+                pname = self.expect('IDENT')[1]
+                params.append(pname)
+                # v1.4: optional default value  fn f(x, y=10)
+                if self.current()[0] == 'ASSIGN':
+                    self.advance()
+                    defaults[pname] = self.parse_expr()
             if self.current()[0] == 'COMMA':
                 self.advance()
         self.expect('RPAREN')
-        return ('FUNCDEF', name, params, self.parse_block(), variadic)
+        return ('FUNCDEF', name, params, defaults, self.parse_block(), variadic)
 
     def parse_try(self):
         self.advance()                  # consume 'try'
@@ -498,7 +515,59 @@ class Parser:
         self.skip_newlines()
         self.expect('IDENT', 'catch')
         err_var = self.expect('IDENT')[1]
-        return ('TRY', body, err_var, self.parse_block())
+        handler = self.parse_block()
+        # v1.4: optional finally block
+        finally_block = None
+        self.skip_newlines()
+        if self.current()[0] == 'IDENT' and self.current()[1] == 'finally':
+            self.advance()
+            finally_block = self.parse_block()
+        return ('TRY', body, err_var, handler, finally_block)
+    
+    def parse_do_while(self):
+        self.advance()  # 'do'
+        body = self.parse_block()
+        self.skip_newlines()
+        self.expect('IDENT', 'wh')
+        return ('DO_WHILE', body, self.parse_expr())
+
+    def parse_switch(self):
+        self.advance()  # 'sw'
+        subject = self.parse_expr()
+        self.expect('LBRACE')
+        cases, default = [], None
+        while True:
+            self.skip_newlines()
+            if self.current()[0] == 'RBRACE': self.advance(); break
+            if self.current()[1] == 'cs':
+                self.advance()
+                values = [self.parse_expr()]
+                while self.current()[0] == 'COMMA':
+                    self.advance(); values.append(self.parse_expr())
+                cases.append((values, self.parse_block()))
+            elif self.current()[1] == 'df':
+                self.advance(); default = self.parse_block()
+        return ('SWITCH', subject, cases, default)
+
+    def parse_assert(self):
+        self.advance()  # 'assert'
+        cond = self.parse_expr()
+        msg = None
+        if self.current()[0] == 'COMMA':
+            self.advance(); msg = self.parse_expr()
+        return ('ASSERT', cond, msg)
+
+    def parse_from_import(self):
+        self.advance()  # 'from'
+        path = self.parse_expr()
+        self.expect('IDENT', 'import')
+        self.expect('LBRACE')
+        names = []
+        while self.current()[0] != 'RBRACE':
+            names.append(self.expect('IDENT')[1])
+            if self.current()[0] == 'COMMA': self.advance()
+        self.expect('RBRACE')
+        return ('FROM_IMPORT', path, names)
 
     def parse_struct(self):
         """
@@ -532,13 +601,13 @@ class Parser:
                 raise SyntaxError(
                     f"[line {self.current_line()}] Expected method definition inside struct '{name}'"
                 )
-            fn_node = self.parse_fn()   # ('FUNCDEF', fname, params, body, variadic)
-            _, fname, params, body, variadic = fn_node
+            fn_node = self.parse_fn()   # ('FUNCDEF', fname, params, defaults, body, variadic)
+            _, fname, params, defaults, body, variadic = fn_node
             if fname in methods:
                 raise SyntaxError(
                     f"Duplicate method '{fname}' in struct '{name}'"
                 )
-            methods[fname] = (params, body, variadic)
+            methods[fname] = (params, defaults, body, variadic)
         return ('STRUCTDEF', name, parent_name, methods)
 
     # ── Expression parsing (recursive descent) ───────────────────
@@ -563,7 +632,7 @@ class Parser:
         return self.parse_ternary()
 
     def parse_ternary(self):
-        cond = self.parse_or()
+        cond = self.parse_nullco()
         if self.current()[0] == 'QMARK':
             self.advance()
             true_val  = self.parse_or()
@@ -571,6 +640,13 @@ class Parser:
             false_val = self.parse_or()
             return ('TERNARY', cond, true_val, false_val)
         return cond
+    
+    def parse_nullco(self):
+        left = self.parse_or()
+        while self.current()[0] == 'OP_NULLCO':
+            self.advance()
+            left = ('BINOP', '??', left, self.parse_or())
+        return left
 
     def parse_or(self):
         left = self.parse_and()
@@ -613,11 +689,18 @@ class Parser:
 
     def parse_compare(self):
         left = self.parse_shift()
-        while self.current()[0] in ('OP_EQ', 'OP_NEQ', 'OP_LTE', 'OP_GTE', 'OP'):
-            op = self.current()[1]
-            if op in ('==', '!=', '<=', '>=', '<', '>'):
+        while True:
+            tok = self.current()
+            # v1.4: 'in' operator
+            if tok[0] == 'IDENT' and tok[1] == 'in':
                 self.advance()
-                left = ('BINOP', op, left, self.parse_shift())
+                left = ('BINOP', 'in', left, self.parse_shift())
+            elif tok[0] in ('OP_EQ', 'OP_NEQ', 'OP_LTE', 'OP_GTE'):
+                self.advance()
+                left = ('BINOP', tok[1], left, self.parse_shift())
+            elif tok[0] == 'OP' and tok[1] in ('<', '>'):
+                self.advance()
+                left = ('BINOP', tok[1], left, self.parse_shift())
             else:
                 break
         return left
@@ -674,12 +757,12 @@ class Parser:
     def parse_postfix(self):
         """
         Left-associative postfix:
-          call        expr(args)
-          index       expr[i]
-          slice       expr[a:b]  expr[:b]  expr[a:]  expr[:]
-          method      expr.method(args)
-          attr        expr.attr
-          nil-safe    expr?.method()   expr?.attr
+            call        expr(args)
+            index       expr[i]
+            slice       expr[a:b]  expr[:b]  expr[a:]  expr[:]
+            method      expr.method(args)
+            attr        expr.attr
+            nil-safe    expr?.method()   expr?.attr
         """
         node = self.parse_primary()
 
@@ -791,18 +874,23 @@ class Parser:
                 self.advance()
                 self.expect('LPAREN')
                 params   = []
+                defaults = {}
                 variadic = None
                 while self.current()[0] != 'RPAREN':
                     if self.current()[0] == 'OP' and self.current()[1] == '*':
                         self.advance()
                         variadic = self.expect('IDENT')[1]
                     else:
-                        params.append(self.expect('IDENT')[1])
+                        pname = self.expect('IDENT')[1]
+                        params.append(pname)
+                        if self.current()[0] == 'ASSIGN':
+                            self.advance()
+                            defaults[pname] = self.parse_expr()
                     if self.current()[0] == 'COMMA':
                         self.advance()
                 self.expect('RPAREN')
                 body = self.parse_block()
-                return ('LAMBDA', params, body, variadic)
+                return ('LAMBDA', params, defaults, body, variadic)
             self.advance()
             return ('VAR', tok[1])
 
@@ -816,7 +904,12 @@ class Parser:
             self.advance()
             items = []
             while self.current()[0] != 'RBRACKET':
-                items.append(self.parse_expr())
+                # v1.4: spread item  ...expr
+                if self.current()[0] == 'SPREAD':
+                    self.advance()
+                    items.append(('SPREAD_ITEM', self.parse_expr()))
+                else:
+                    items.append(self.parse_expr())
                 if self.current()[0] == 'COMMA':
                     self.advance()
             self.expect('RBRACKET')
@@ -826,10 +919,15 @@ class Parser:
             self.advance()
             pairs = []
             while self.current()[0] != 'RBRACE':
-                key = self.parse_expr()
-                self.expect('COLON')
-                val = self.parse_expr()
-                pairs.append((key, val))
+                # v1.4: spread dict  ...expr
+                if self.current()[0] == 'SPREAD':
+                    self.advance()
+                    pairs.append(('SPREAD_PAIR', self.parse_expr()))
+                else:
+                    key = self.parse_expr()
+                    self.expect('COLON')
+                    val = self.parse_expr()
+                    pairs.append((key, val))
                 if self.current()[0] == 'COMMA':
                     self.advance()
             self.expect('RBRACE')
@@ -849,16 +947,6 @@ class Parser:
 #  Control flow (rt / brk / cnt / throw) is implemented via Python
 #  exceptions so they bubble through arbitrarily nested calls.
 #
-#  v1.3 additions:
-#    MinLangClass.parent     — single-parent inheritance chain
-#    MinLangSuper            — proxy bound to `super` inside methods
-#    MinLangModule           — namespace produced by `import … as`
-#    MinLangThrow            — user-raised errors (throw expr)
-#    _find_method            — walks inheritance chain for method lookup
-#    _call_method            — now accepts dispatching_class, injects super
-#    instanceof              — now walks the full inheritance chain
-#    STRUCTDEF node          — now carries parent_name field
-#    IMPORT / EXPORT / THROW — new statement kinds
 # ═══════════════════════════════════════════════════════════════
 
 class ReturnException(Exception):
@@ -902,12 +990,13 @@ class Environment:
 
 class Function:
     """A first-class MinLang function value (closure)."""
-    def __init__(self, name, params, body, env, variadic=None):
+    def __init__(self, name, params, body, env, variadic=None, defaults=None):
         self.name     = name
         self.params   = params    # list of regular param names
         self.body     = body      # BLOCK AST node
         self.env      = env       # closure: scope at definition time
-        self.variadic = variadic  # name of *args param, or None
+        self.variadic = variadic  # name of *args param, or None\
+        self.defaults = defaults or {}
 
     def __repr__(self):
         return f"<fn {self.name}>"
@@ -984,6 +1073,15 @@ class Interpreter:
         e = self.global_env
 
         # Math
+        e.set('asin',  lambda a: _math.asin(a[0]))
+        e.set('acos',  lambda a: _math.acos(a[0]))
+        e.set('atan',  lambda a: _math.atan(a[0]))
+        e.set('atan2', lambda a: _math.atan2(a[0], a[1]))
+        e.set('hypot', lambda a: _math.hypot(*a))
+        e.set('gcd',   lambda a: _math.gcd(int(a[0]), int(a[1])))
+        e.set('lcm',   lambda a: _math.lcm(int(a[0]), int(a[1])))
+        e.set('trunc', lambda a: math.trunc(a[0]))
+        e.set('sign',  lambda a: (1 if a[0] > 0 else -1 if a[0] < 0 else 0))
         e.set('sqrt',  lambda a: math.sqrt(a[0]))
         e.set('abs',   lambda a: abs(a[0]))
         e.set('pow',   lambda a: a[0] ** a[1])
@@ -1147,8 +1245,10 @@ class Interpreter:
 
         elif isinstance(fn, Function):
             env = Environment(fn.env)
-            for param, arg in zip(fn.params, args):
-                env.set(param, arg)
+            for i, param in enumerate(fn.params):
+                env.set(param, args[i] if i < len(args) else
+                        self.eval(fn.defaults[param], fn.env) if param in fn.defaults
+                        else None)
             if fn.variadic is not None:
                 env.set(fn.variadic, list(args[len(fn.params):]))
             try:
@@ -1171,7 +1271,7 @@ class Interpreter:
         """
         Execute a struct method with 'self' bound to the instance.
         v1.3: also injects 'super' pointing to the parent of dispatching_class,
-              so that child methods can call super.method(args).
+                so that child methods can call super.method(args).
         """
         env = Environment(method_fn.env)
         env.set('self', instance)
@@ -1206,8 +1306,8 @@ class Interpreter:
         """
         Execute source in a fresh child scope (sees builtins).
         Returns a MinLangModule whose exports dict contains:
-          - all names listed by `export` statements, OR
-          - every non-dunder top-level name if no exports were declared.
+            - all names listed by `export` statements, OR
+            - every non-dunder top-level name if no exports were declared.
         """
         tokens = tokenize(source)
         ast    = Parser(tokens).parse()
@@ -1355,8 +1455,8 @@ class Interpreter:
                     continue
 
         elif kind == 'FUNCDEF':
-            _, name, params, body, variadic = node
-            env.set(name, Function(name, params, body, env, variadic))
+            _, name, params, defaults, body, variadic = node
+            env.set(name, Function(name, params, body, env, variadic, defaults))
 
         elif kind == 'STRUCTDEF':
             # v1.3: node is now ('STRUCTDEF', name, parent_name, method_defs)
@@ -1369,8 +1469,8 @@ class Interpreter:
                         f"'{parent_name}' is not a struct — cannot use as parent"
                     )
             methods = {
-                mname: Function(mname, params, body, env, variadic)
-                for mname, (params, body, variadic) in method_defs.items()
+                mname: Function(mname, params, body, env, variadic, defaults)
+                for mname, (params, defaults, body, variadic) in method_defs.items()
             }
             env.set(name, MinLangClass(name, methods, parent))
 
@@ -1389,13 +1489,12 @@ class Interpreter:
             raise MinLangThrow(self.eval(val_node, env))
 
         elif kind == 'TRY':
-            _, body, err_var, handler = node
+            _, body, err_var, handler, finally_block = node
             try:
                 self.exec_block(body, Environment(env))
             except (ReturnException, BreakException, ContinueException):
                 raise
             except MinLangThrow as e:
-                # v1.3: user-thrown value exposed as-is (not stringified)
                 handler_env = Environment(env)
                 handler_env.set(err_var, e.val)
                 self.exec_block(handler, handler_env)
@@ -1403,6 +1502,9 @@ class Interpreter:
                 handler_env = Environment(env)
                 handler_env.set(err_var, str(exc))
                 self.exec_block(handler, handler_env)
+            finally:
+                if finally_block:
+                    self.exec_block(finally_block, Environment(env))
 
         elif kind == 'USE':
             # Legacy: run file in current scope (no namespace isolation)
@@ -1461,6 +1563,40 @@ class Interpreter:
 
         elif kind == 'BLOCK':
             return self.exec_block(node, env)
+        
+        elif kind == 'INC_STMT':
+            env.assign(node[1], env.get(node[1]) + 1)
+        elif kind == 'DEC_STMT':
+            env.assign(node[1], env.get(node[1]) - 1)
+        elif kind == 'DO_WHILE':
+            _, body, cond = node
+            while True:
+                try: self.exec_block(body, Environment(env))
+                except BreakException: break
+                except ContinueException: pass
+                if not self.eval(cond, env): break
+        elif kind == 'SWITCH':
+            _, subject, cases, default = node
+            val = self.eval(subject, env)
+            matched = False
+            for values, body in cases:
+                if any(self.eval(v, env) == val for v in values):
+                    self.exec_block(body, Environment(env)); matched = True; break
+            if not matched and default:
+                self.exec_block(default, Environment(env))
+        elif kind == 'ASSERT':
+            _, cond, msg = node
+            if not self.eval(cond, env):
+                m = self.to_str(self.eval(msg, env)) if msg else "assertion failed"
+                raise RuntimeError(f"AssertionError: {m}")
+        elif kind == 'FROM_IMPORT':
+            _, path_node, names = node
+            path = self.eval(path_node, env)
+            src = open(path, encoding='utf-8').read()
+            mod = self._run_module(src, path)
+            for n in names:
+                if n not in mod.exports: raise NameError(f"Module '{path}' has no export '{n}'")
+                env.set(n, mod.exports[n])
 
     # ── Expression evaluator ──────────────────────────────────────
 
@@ -1484,14 +1620,22 @@ class Interpreter:
             return env.get(node[1])
 
         if kind == 'LAMBDA':
-            _, params, body, variadic = node
-            return Function('<lambda>', params, body, env, variadic)
+            _, params, defaults, body, variadic = node
+            return Function('<lambda>', params, body, env, variadic, defaults)
 
         if kind == 'LIST':
-            return [self.eval(item, env) for item in node[1]]
+            result = []
+            for item in node[1]:
+                if item[0] == 'SPREAD_ITEM': result.extend(self.eval(item[1], env))
+                else: result.append(self.eval(item, env))
+            return result
 
         if kind == 'DICT':
-            return {self.eval(k, env): self.eval(v, env) for k, v in node[1]}
+            result = {}
+            for pair in node[1]:
+                if pair[0] == 'SPREAD_PAIR': result.update(self.eval(pair[1], env))
+                else: result[self.eval(pair[0], env)] = self.eval(pair[1], env)
+            return result
 
         # ── Ternary: cond ? a : b ─────────────────────────────────
         if kind == 'TERNARY':
@@ -1523,6 +1667,8 @@ class Interpreter:
             if op == '^':   return int(lv) ^  int(rv)
             if op == '<<':  return int(lv) << int(rv)
             if op == '>>':  return int(lv) >> int(rv)
+            if op == '??':  return lv if lv is not None else rv
+            if op == 'in':  return lv in rv
 
         # ── Unary operations ──────────────────────────────────────
         if kind == 'UNOP':
@@ -1677,6 +1823,15 @@ class Interpreter:
         if method == 'del':    obj.pop(args[0], None); return obj
         if method == 'merge':  return {**obj, **args[0]}
 
+        if method == 'padL':   return obj.rjust(args[0], args[1] if len(args)>1 else ' ')
+        if method == 'padR':   return obj.ljust(args[0], args[1] if len(args)>1 else ' ')
+        if method == 'repeat': return obj * int(args[0])
+        if method == 'chars':  return list(obj)
+        if method == 'lstrip': return obj.lstrip(args[0] if args else None)
+        if method == 'rstrip': return obj.rstrip(args[0] if args else None)
+        if method == 'isNum':  return obj.isnumeric()
+        if method == 'isAlpha':return obj.isalpha()
+
         raise AttributeError(f"Unknown method: '{method}'")
 
     # ── Value → string conversion ─────────────────────────────────
@@ -1747,7 +1902,7 @@ def run_code(source, interp=None):
 
 def repl():
     """Interactive REPL with multi-line block support."""
-    print("MinLang REPL v1.3  |  'q' to quit  |  'help' for reference")
+    print("MinLang REPL v1.4  |  'q' to quit  |  'help' for reference")
     print("─" * 56)
     interp = Interpreter()
     buf    = []
@@ -1787,12 +1942,13 @@ def repl():
 def print_help():
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║              MinLang v1.3  —  Quick Reference            ║
+║              MinLang v1.4  —  Quick Reference            ║
 ╠══════════════════════════════════════════════════════════╣
 ║  VARIABLES                                               ║
 ║   L x = 5              declare                           ║
 ║   x = 10               reassign                          ║
 ║   x += 1               compound  (+=  -=  *=  /=  %=)    ║
+║   x++   x--            increment / decrement  v1.4       ║
 ║   L [a,b,*r] = lst     list destructure  (*r = rest)     ║
 ║   L {x,y} = dct        dict destructure                  ║
 ║                                                          ║
@@ -1808,19 +1964,42 @@ def print_help():
 ║   s.up()  s.lo()  s.trim()  s.split(",")                 ║
 ║   s.replace(a,b)  s.find(x)  s.has(x)                    ║
 ║   s.startsWith(x)  s.endsWith(x)                         ║
+║   s.padL(n)  s.padR(n, "0")   ## pad to width  v1.4      ║
+║   s.repeat(n)   s.chars()     ## repeat / split  v1.4    ║
+║   s.lstrip()    s.rstrip()    ## one-side trim  v1.4     ║
+║   s.isNum()     s.isAlpha()   ## char checks   v1.4      ║
 ║                                                          ║
 ║  CONDITIONS                                              ║
 ║   if x > 5 { }  elif x == 5 { }  el { }                  ║
 ║   cond ? a : b         ternary expression                ║
+║   x in lst             membership test  v1.4             ║
+║   x ?? default         nil-coalescing   v1.4             ║
+║                                                          ║
+║  SWITCH  (v1.4)                                          ║
+║   sw expr {                                              ║
+║     cs 1, 2 { ptl "low" }   ## multiple values           ║
+║     cs 3    { ptl "three" }                              ║
+║     df      { ptl "other" } ## optional default          ║
+║   }                                                      ║
 ║                                                          ║
 ║  LOOPS                                                   ║
 ║   lp i in rng(10) { }  for loop                          ║
 ║   wh x < 10 { }        while loop                        ║
+║   do { x++ } wh x < 5  do-while loop  v1.4               ║
 ║   brk / cnt            break / continue                  ║
 ║                                                          ║
 ║  FUNCTIONS                                               ║
 ║   fn add(a, b) { rt a + b }                              ║
-║   fn greet(*names) { lp n in names { ptl n } }           ║
+║   fn greet(name="World") { ptl name }  ## default  v1.4  ║
+║   fn f(*args) { lp x in args { ptl x } }  ## variadic    ║
+║                                                          ║
+║  ASSERT  (v1.4)                                          ║
+║   assert x > 0                                           ║
+║   assert x > 0, "x must be positive"                     ║
+║                                                          ║
+║  SPREAD  (v1.4)                                          ║
+║   L c = [...a, ...b, 99]    ## list spread               ║
+║   L m = {...d1, ...d2}      ## dict spread               ║
 ║                                                          ║
 ║  STRUCTS  (OOP)                                          ║
 ║   struct Animal {                                        ║
@@ -1835,29 +2014,20 @@ def print_help():
 ║     fn speak() { ptl f"Woof! I'm {self.name}" }          ║
 ║     fn str() { rt f"Dog({self.name})" }                  ║
 ║   }                                                      ║
-║   L d = Dog("Rex", "Lab")  ## construct                  ║
-║   d.speak()                ## method call                ║
-║   ptl d.name               ## read attribute             ║
-║   d.name = "Max"           ## write attribute            ║
-║   instanceof(d, Dog)       ## T                          ║
 ║   instanceof(d, Animal)    ## T  (chain)  v1.3           ║
-║   className(d)             ## "Dog"                      ║
-║   isObj(d)                 ## T                          ║
+║   className(d)  isObj(d)                                 ║
 ║                                                          ║
 ║  ERROR HANDLING                                          ║
 ║   try { risky() } catch e { ptl e }                      ║
+║   try { } catch e { } finally { cleanup() }  ## v1.4     ║
 ║   throw "something went wrong"       ## v1.3             ║
 ║   throw MyError("typed error")       ## v1.3             ║
 ║                                                          ║
-║  MODULES  (v1.3)                                         ║
-║   ## In utils.minl:                                      ║
-║   fn helper() { rt 42 }                                  ║
-║   export helper          ## explicit export              ║
-║                                                          ║
-║   ## In main.minl:                                       ║
-║   import "utils.minl" as utils                           ║
-║   ptl utils.helper()                                     ║
-║   use "legacy.minl"      ## old: runs in current scope   ║
+║  MODULES                                                 ║
+║   import "utils.minl" as utils       ## namespace  v1.3  ║
+║   from "utils.minl" import { f, g }  ## selective v1.4   ║
+║   use "legacy.minl"                  ## current scope    ║
+║   export myFunc                      ## v1.3             ║
 ║                                                          ║
 ║  NIL-SAFE ACCESS                                         ║
 ║   obj?.method()        nil if obj is nil                 ║
@@ -1865,24 +2035,28 @@ def print_help():
 ║                                                          ║
 ║  OPERATORS                                               ║
 ║   2 ** 10              power (right-associative)         ║
-║   17 // 5              integer division → 3    v1.3      ║
+║   17 // 5              integer division → 3              ║
+║   x ?? "default"       nil-coalescing           v1.4     ║
+║   x in lst             membership (list/dict/str) v1.4   ║
 ║   == != < > <= >=  &&  ||  !                             ║
-║   & | ^ ~ << >>        bitwise             v1.3          ║
+║   & | ^ ~ << >>        bitwise                           ║
+║                                                          ║
+║  MATH BUILT-INS                                          ║
+║   sqrt abs pow floor ceil rnd log sin cos tan            ║
+║   asin acos atan atan2 hypot gcd lcm trunc sign  v1.4    ║
+║                                                          ║
+║  LIST BUILT-INS                                          ║
+║   rng push pop sort rev map flt2 red flat uniq zip2      ║
 ║                                                          ║
 ║  DICT METHODS                                            ║
 ║   d.keys()  d.values()  d.items()                        ║
-║   d.get("k", default)  d.has("k")  d.del("k")            ║
-║   d.merge(other)                                         ║
+║   d.get("k", default)  d.has("k")  d.del("k")  d.merge() ║
 ║                                                          ║
-║  BUILT-INS                                               ║
-║   len sqrt abs pow rnd max min sum log sin cos tan       ║
-║   rng push pop sort rev map flt2 red flat uniq zip2      ║
-║   up lo trim split join find replace fmt                 ║
-║   int flt str canInt canFlt toInt toFlt                  ║
+║  OTHER BUILT-INS                                         ║
+║   len str int flt bool  canInt canFlt toInt toFlt        ║
 ║   now clock date sleep rand randInt pick shuffle         ║
-║   keys values items hasKey delKey merge                  ║
-║   read write append exists exit                          ║
-║   instanceof className isObj                             ║
+║   read write append exists exit sysArgs sysEnv           ║
+║   instanceof className isObj isInt isFlt isStr isLst     ║
 ╚══════════════════════════════════════════════════════════╝
 """)
 

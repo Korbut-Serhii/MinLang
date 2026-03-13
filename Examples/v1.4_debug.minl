@@ -1,0 +1,310 @@
+## ══════════════════════════════════════════════════════════
+##  MinLang v1.4 — Debug / Feature Test Suite
+##  Run:  python3 minlang.py test_v14.minl
+## ══════════════════════════════════════════════════════════
+
+fn check(label, got, expected) {
+    if got == expected {
+        ptl f"  ✓  {label}"
+    } el {
+        ptl f"  ✗  {label}  →  got={got}  expected={expected}"
+    }
+}
+
+## ──────────────────────────────────────────────────────────
+##  1. INCREMENT / DECREMENT  (x++  x--)
+## ──────────────────────────────────────────────────────────
+ptl "[ 1 ] x++ / x--"
+
+L n = 10
+n++
+check("x++  10 → 11",  n, 11)
+
+n--
+n--
+check("x--  11 → 9",   n, 9)
+
+L z = 0
+z++
+z++
+z++
+check("0 + 3x ++",     z, 3)
+
+
+## ──────────────────────────────────────────────────────────
+##  2. NIL-COALESCING  (??)
+## ──────────────────────────────────────────────────────────
+ptl "[ 2 ] ?? nil-coalescing"
+
+L a = nil
+check("nil ?? 42",         a ?? 42,       42)
+
+L b = "hello"
+check("str ?? 42  → str",  b ?? 42,       "hello")
+
+check("0 ?? 99  → 0",      0 ?? 99,       0)
+check("F ?? T   → F",      F ?? T,        F)
+
+L c = nil
+L d = nil
+L e = 7
+check("nil ?? nil ?? 7",   c ?? d ?? e,   7)
+
+
+## ──────────────────────────────────────────────────────────
+##  3. DO-WHILE
+## ──────────────────────────────────────────────────────────
+ptl "[ 3 ] do-while"
+
+L i = 0
+do { i++ } wh i < 5
+check("counts to 5",        i, 5)
+
+L i2 = 99
+do { i2++ } wh i2 < 5
+check("runs at least once", i2, 100)
+
+L acc = 0
+L j = 1
+do {
+    acc += j
+    j++
+} wh j <= 4
+check("sum 1..4 = 10",      acc, 10)
+
+
+## ──────────────────────────────────────────────────────────
+##  4. SWITCH / CASE / DEFAULT
+## ──────────────────────────────────────────────────────────
+ptl "[ 4 ] sw / cs / df"
+
+fn sw_basic(v) {
+    L out = "none"
+    sw v {
+        cs 1 { out = "one"   }
+        cs 2 { out = "two"   }
+        cs 3 { out = "three" }
+        df   { out = "other" }
+    }
+    rt out
+}
+check("cs 1",        sw_basic(1), "one")
+check("cs 2",        sw_basic(2), "two")
+check("cs 3",        sw_basic(3), "three")
+check("df  (9)",     sw_basic(9), "other")
+
+fn sw_multi(v) {
+    L out = "x"
+    sw v {
+        cs 1, 2, 3 { out = "low"  }
+        cs 4, 5    { out = "mid"  }
+        df         { out = "high" }
+    }
+    rt out
+}
+check("multi cs 1",   sw_multi(1), "low")
+check("multi cs 3",   sw_multi(3), "low")
+check("multi cs 4",   sw_multi(4), "mid")
+check("multi df 99",  sw_multi(99), "high")
+
+fn sw_str(v) {
+    L out = "?"
+    sw v {
+        cs "red"         { out = "#f00" }
+        cs "green"       { out = "#0f0" }
+        cs "blue"        { out = "#00f" }
+        df               { out = "unknown" }
+    }
+    rt out
+}
+check("sw string red",   sw_str("red"),   "#f00")
+check("sw string blue",  sw_str("blue"),  "#00f")
+check("sw string miss",  sw_str("pink"),  "unknown")
+
+
+## ──────────────────────────────────────────────────────────
+##  5. ASSERT
+## ──────────────────────────────────────────────────────────
+ptl "[ 5 ] assert"
+
+L assert_ok = T
+try {
+    assert 2 + 2 == 4
+} catch e {
+    assert_ok = F
+}
+check("assert passes silently", assert_ok, T)
+
+L assert_msg = ""
+try {
+    assert 1 == 2, "one is not two"
+} catch e {
+    assert_msg = e
+}
+check("assert fails w/ msg",  assert_msg, "AssertionError: one is not two")
+
+L assert_nomsg = ""
+try {
+    assert F
+} catch e {
+    assert_nomsg = e
+}
+check("assert F no msg", assert_nomsg, "AssertionError: assertion failed")
+
+
+## ──────────────────────────────────────────────────────────
+##  6. DEFAULT PARAMETERS
+## ──────────────────────────────────────────────────────────
+ptl "[ 6 ] default params"
+
+fn greet(name="World") { rt f"Hello {name}" }
+check("greet()",        greet(),      "Hello World")
+check("greet(Min)",     greet("Min"), "Hello Min")
+
+fn add(a, b=10) { rt a + b }
+check("add(5)",         add(5),       15)
+check("add(5, 1)",      add(5, 1),     6)
+
+fn tag(text, open="<b>", close="</b>") {
+    rt f"{open}{text}{close}"
+}
+check("tag all defaults",  tag("hi"),              "<b>hi</b>")
+check("tag partial",       tag("hi", "<i>"),       "<i>hi</b>")
+check("tag full override",  tag("hi","<u>","</u>"), "<u>hi</u>")
+
+L f = fn(x, n=100) { rt x + n }
+check("lambda default",    f(5),    105)
+check("lambda override",   f(5, 0),  5)
+
+
+## ──────────────────────────────────────────────────────────
+##  7. SPREAD OPERATOR  (...)
+## ──────────────────────────────────────────────────────────
+ptl "[ 7 ] spread ..."
+
+L xs = [1, 2, 3]
+L ys = [4, 5]
+L zs = [...xs, ...ys]
+check("list spread concat",      zs,  [1,2,3,4,5])
+
+L front = [0, ...xs]
+check("spread in middle-front",  front, [0,1,2,3])
+
+L back = [...xs, 99]
+check("spread + literal",        back, [1,2,3,99])
+
+L d1 = {"a": 1, "b": 2}
+L d2 = {"c": 3}
+L dm = {...d1, ...d2}
+check("dict spread merge",       dm.get("a", 0), 1)
+check("dict spread merge c",     dm.get("c", 0), 3)
+
+L d3 = {"b": 99}
+L dov = {...d1, ...d3}
+check("dict spread override",    dov.get("b", 0), 99)
+
+
+## ──────────────────────────────────────────────────────────
+##  8. IN OPERATOR
+## ──────────────────────────────────────────────────────────
+ptl "[ 8 ] in operator"
+
+L lst = [10, 20, 30]
+check("10 in list  → T",   10 in lst, T)
+check("99 in list  → F",   99 in lst, F)
+
+L dct = {"key": 1, "x": 2}
+check("key in dict → T",   "key" in dct, T)
+check("z   in dict → F",   "z"   in dct, F)
+
+check("sub in str  → T",   "ell" in "hello", T)
+check("xyz in str  → F",   "xyz" in "hello", F)
+
+fn all_present(items, pool) {
+    L ok = T
+    lp x in items {
+        if !(x in pool) { ok = F }
+    }
+    rt ok
+}
+check("all [1,2] in [1,2,3]", all_present([1,2],   [1,2,3]), T)
+check("all [1,9] not all",    all_present([1,9],   [1,2,3]), F)
+
+
+## ──────────────────────────────────────────────────────────
+##  9. FINALLY
+## ──────────────────────────────────────────────────────────
+ptl "[ 9 ] finally"
+
+L log = []
+
+try {
+    push(log, "try")
+} catch e {
+    push(log, "catch")
+} finally {
+    push(log, "finally")
+}
+check("finally runs on success", log, ["try", "finally"])
+
+L log2 = []
+try {
+    push(log2, "try")
+    throw "boom"
+    push(log2, "after-throw")
+} catch e {
+    push(log2, "catch")
+} finally {
+    push(log2, "finally")
+}
+check("finally runs on error", log2, ["try", "catch", "finally"])
+
+
+## ──────────────────────────────────────────────────────────
+##  10. NEW MATH BUILT-INS
+## ──────────────────────────────────────────────────────────
+ptl "[ 10 ] new math builtins"
+
+check("trunc(3.9)",    trunc(3.9),   3)
+check("trunc(-3.9)",   trunc(-3.9), -3)
+check("sign(5)",       sign(5),      1)
+check("sign(-5)",      sign(-5),    -1)
+check("sign(0)",       sign(0),      0)
+check("gcd(12, 8)",    gcd(12, 8),   4)
+check("gcd(100, 75)",  gcd(100,75),  25)
+check("lcm(4, 6)",     lcm(4, 6),    12)
+check("hypot(3, 4)",   hypot(3, 4),  5)
+
+L pi2 = rnd(asin(1) * 2, 5)
+check("asin(1)*2 ≈ pi", pi2, 3.14159)
+
+check("atan2(1,1) > 0", atan2(1,1) > 0, T)
+
+
+## ──────────────────────────────────────────────────────────
+##  11. NEW STRING METHODS
+## ──────────────────────────────────────────────────────────
+ptl "[ 11 ] new string methods"
+
+check("padL(8)",        "hi".padL(8),       "      hi")
+check("padL(8,'0')",    "42".padL(5, "0"),  "00042")
+check("padR(8)",        "hi".padR(8),       "hi      ")
+check("padR(8,'-')",    "hi".padR(6, "-"),  "hi----")
+check("repeat(3)",      "ab".repeat(3),     "ababab")
+check("repeat(0)",      "ab".repeat(0),     "")
+check("chars()",        "abc".chars(),      ["a","b","c"])
+check("lstrip",         "  hi  ".lstrip(),  "hi  ")
+check("rstrip",         "  hi  ".rstrip(),  "  hi")
+check("isNum T",        "123".isNum(),      T)
+check("isNum F",        "12x".isNum(),      F)
+check("isAlpha T",      "abc".isAlpha(),    T)
+check("isAlpha F",      "ab1".isAlpha(),    F)
+
+
+## ──────────────────────────────────────────────────────────
+##  DONE
+## ──────────────────────────────────────────────────────────
+ptl ""
+ptl "══════════════════════════════════"
+ptl "  MinLang v1.4 test suite done"
+ptl "══════════════════════════════════"

@@ -19,12 +19,12 @@
 6. [Text (strings)](#6-text-strings)
 7. [True and False (booleans)](#7-true-and-false-booleans)
 8. [Getting input from the user](#8-getting-input-from-the-user)
-9. [Making decisions — if / elif / el](#9-making-decisions--if--elif--el)
+9. [Making decisions — if / elif / el / sw](#9-making-decisions--if--elif--el)
 10. [Repeating things — loops](#10-repeating-things--loops)
 11. [Organising code — functions](#11-organising-code--functions)
 12. [Lists — keeping many values together](#12-lists--keeping-many-values-together)
 13. [Dictionaries — labelled boxes](#13-dictionaries--labelled-boxes)
-14. [Error handling — try / catch](#14-error-handling--try--catch)
+14. [Error handling — try / catch / finally / assert](#14-error-handling--try--catch)
 15. [Structs — grouping data and behaviour together](#15-structs--grouping-data-and-behaviour-together)
 16. [Modules — splitting code across files](#16-modules--splitting-code-across-files)
 17. [Built-in tools — the standard library](#17-built-in-tools--the-standard-library)
@@ -87,7 +87,7 @@ python3 minlang.py
 You get an interactive prompt that looks like this:
 
 ```
-MinLang REPL v1.3  |  'q' to quit  |  'help' for reference
+MinLang REPL v1.4  |  'q' to quit  |  'help' for reference
 ────────────────────────────────────────────────────────
 >>>
 ```
@@ -265,6 +265,31 @@ wh i < 10 {
 ```
 
 This works anywhere you would write the long form — loops, scores, totals, anything.
+
+### Increment and decrement — `x++` and `x--`
+
+For the single most common update patterns — adding or subtracting exactly 1 —
+MinLang provides an even shorter form:
+
+| Write | Means |
+|---|---|
+| `x++` | `x = x + 1` |
+| `x--` | `x = x - 1` |
+
+```
+L lives = 3
+lives--      ## lost one life
+ptl lives    ## 2
+
+L step = 0
+step++
+step++
+step++
+ptl step     ## 3
+```
+
+These are **statement** shortcuts, not expressions — they stand alone on their own
+line and cannot appear inside a larger expression.
 
 ### Why can't I just use `=` without `L` the first time?
 
@@ -478,6 +503,30 @@ ptl ceil(3.1)       ## 4    — round UP to nearest whole number
 ptl rnd(3.14159, 2) ## 3.14 — round to 2 decimal places
 ptl max(5, 3, 8)    ## 8    — the largest value
 ptl min(5, 3, 8)    ## 3    — the smallest value
+ptl trunc(3.9)      ## 3    — truncate toward zero (unlike floor, works symmetrically for negatives)
+ptl trunc(-3.9)     ## -3
+ptl sign(5)         ## 1    — returns 1 for positive, -1 for negative, 0 for zero
+ptl sign(-42)       ## -1
+ptl sign(0)         ## 0
+```
+
+For number theory:
+```
+ptl gcd(12, 8)      ## 4    — greatest common divisor
+ptl lcm(4, 6)       ## 12   — least common multiple
+ptl hypot(3, 4)     ## 5.0  — length of hypotenuse: sqrt(3²+4²)
+```
+
+Trigonometry (angles in radians):
+```
+ptl sin(0)          ## 0
+ptl cos(0)          ## 1
+ptl tan(pi / 4)     ## 1.0
+ptl asin(1)         ## 1.5707...  (= π/2)
+ptl acos(0)         ## 1.5707...
+ptl atan(1)         ## 0.7853...  (= π/4)
+ptl atan2(1, 1)     ## 0.7853...  — angle of point (1,1); handles all quadrants
+ptl log(100)        ## 4.6051...  — natural log
 ```
 
 The constant `pi` is available without calling a function:
@@ -660,6 +709,45 @@ ptl rep(word, 3)              ## "hellohellohello" — repeat the string 3 times
 ptl replace(word, "l", "r")  ## "herro"         — replace all "l" with "r"
 ```
 
+String methods — you can also call many operations directly on a string value
+using dot notation:
+
+```
+L s = "  hello world  "
+
+ptl s.up()              ## "  HELLO WORLD  "
+ptl s.lo()              ## "  hello world  "
+ptl s.trim()            ## "hello world"   — strips both ends
+ptl s.lstrip()          ## "hello world  " — strips left end only
+ptl s.rstrip()          ## "  hello world" — strips right end only
+```
+
+Padding — useful for aligning text into columns:
+
+```
+ptl "42".padL(6)         ## "    42"  — pad with spaces on the left to width 6
+ptl "42".padL(6, "0")    ## "000042"  — pad with a custom character
+ptl "hi".padR(8)         ## "hi      " — pad on the right
+ptl "hi".padR(8, "-")    ## "hi------"
+```
+
+Repeating and splitting into characters:
+
+```
+ptl "ab".repeat(3)    ## "ababab"
+ptl "hi".repeat(0)    ## ""
+ptl "abc".chars()     ## ["a", "b", "c"]  — every character as a list element
+```
+
+Character inspection:
+
+```
+ptl "123".isNum()     ## T — every character is a digit
+ptl "12x".isNum()     ## F
+ptl "abc".isAlpha()   ## T — every character is a letter
+ptl "ab1".isAlpha()   ## F
+```
+
 ```
 ## Splitting and joining
 L csv = "apple,banana,cherry"
@@ -756,6 +844,66 @@ It's most useful in chains where an earlier step might produce `nil`:
 L user = nil
 ptl user?.name          ## nil — no crash
 ptl user?.score         ## nil — the whole chain short-circuits
+```
+
+### The nil-coalescing operator — `??`
+
+`a ?? b` gives you `a` if it is not `nil`, or `b` as a fallback if it is.
+It's a cleaner alternative to writing `if a == nil { a = b }` every time.
+
+```
+L result = toInt("hello")   ## nil — conversion failed
+ptl result ?? 0              ## 0   — use the fallback
+```
+
+```
+L username = nil
+ptl f"Hello, {username ?? "Guest"}!"   ## Hello, Guest!
+```
+
+Note that `??` only triggers on `nil` — it does **not** trigger on `0`, `F`,
+or `""`, which are all valid non-nil values:
+
+```
+ptl 0 ?? 99     ## 0   — 0 is not nil
+ptl F ?? T      ## F   — F is not nil
+ptl "" ?? "x"  ## ""  — empty string is not nil
+```
+
+You can chain several `??` together — MinLang tries each one from left to right
+and returns the first non-nil value:
+
+```
+L a = nil
+L b = nil
+L c = "found it"
+ptl a ?? b ?? c    ## found it
+```
+
+### The `in` operator — membership test
+
+`x in collection` checks whether a value is present inside a list, a dict
+(by key), or a string (as a substring). It returns `T` or `F`:
+
+```
+L fruits = ["apple", "banana", "cherry"]
+ptl "banana" in fruits    ## T
+ptl "mango"  in fruits    ## F
+
+L config = {"theme": "dark", "lang": "en"}
+ptl "theme" in config     ## T — key exists?
+ptl "size"  in config     ## F
+
+ptl "ell" in "hello"      ## T — substring search
+ptl "xyz" in "hello"      ## F
+```
+
+Use `in` directly inside `if` and `wh` conditions:
+
+```
+if "admin" in roles {
+    ptl "Access granted."
+}
 ```
 
 ---
@@ -951,6 +1099,39 @@ ptl age >= 18 ? "adult" : "minor"
 Keep ternaries simple. If the condition or either branch is complicated,
 a full `if/el` block is easier to read.
 
+### `sw` / `cs` / `df` — switching on a single value
+
+When you want to compare one expression against many possible values, a switch
+is cleaner than a chain of `elif`. Write the value after `sw`, then list each
+`cs` (case) with a block, and optionally a `df` (default) at the end:
+
+```
+L day = 3
+
+sw day {
+    cs 1 { ptl "Monday" }
+    cs 2 { ptl "Tuesday" }
+    cs 3 { ptl "Wednesday" }
+    cs 4 { ptl "Thursday" }
+    cs 5 { ptl "Friday" }
+    df   { ptl "Weekend" }
+}
+```
+
+A `cs` can match **multiple values** separated by commas — useful when several
+cases lead to the same outcome:
+
+```
+sw day {
+    cs 1, 2, 3, 4, 5 { ptl "Weekday" }
+    cs 6, 7           { ptl "Weekend" }
+}
+```
+
+The `df` block is optional. If the value matches no case and there is no `df`,
+the switch does nothing. There is **no fallthrough** — each case is completely
+independent.
+
 ---
 
 ## 10. Repeating things — loops
@@ -989,6 +1170,42 @@ Step by step:
 **Warning:** always make sure the condition will eventually become false,
 or the loop will run forever. This is called an **infinite loop** and you
 have to force-quit the program with Ctrl+C.
+
+### The `do / wh` loop (do-while)
+
+A `do/wh` loop is like a `wh` loop, but the condition is checked **after** the
+body runs. This guarantees the body executes **at least once**, no matter what.
+
+```
+L n = 10
+
+do {
+    ptl n
+    n++
+} wh n < 5
+```
+
+Output:
+```
+10
+```
+
+Even though `n` starts at 10 which already fails `n < 5`, the body still runs
+once before the check. Contrast this with a regular `wh` loop which would
+produce no output at all.
+
+A common use is prompting for input until the user provides something valid:
+
+```
+L raw = ""
+do {
+    inp "Enter a number: " raw
+} wh !canInt(raw)
+
+ptl f"You entered: {int(raw)}"
+```
+
+The prompt will repeat until a valid number is given.
 
 ### The `lp` loop (for loop)
 
@@ -1170,6 +1387,43 @@ fn add(a, b) {
 
 add(3, 5)    ## prints 8
 add(10, 20)  ## prints 30
+```
+
+### Default parameter values
+
+A parameter can have a **default value** — the value it takes when the caller
+doesn't supply it. Write `= value` after the parameter name:
+
+```
+fn greet(name="World") {
+    ptl f"Hello, {name}!"
+}
+
+greet()          ## Hello, World!   — uses the default
+greet("Alice")   ## Hello, Alice!   — caller overrides it
+```
+
+You can mix required and optional parameters. Required ones must come first:
+
+```
+fn createTag(text, tag="p", cls="") {
+    if cls != "" {
+        rt f"<{tag} class=\"{cls}\">{text}</{tag}>"
+    }
+    rt f"<{tag}>{text}</{tag}>"
+}
+
+ptl createTag("Hello")               ## <p>Hello</p>
+ptl createTag("Hello", "h1")         ## <h1>Hello</h1>
+ptl createTag("Hello", "span", "highlight")   ## <span class="highlight">Hello</span>
+```
+
+Defaults also work with anonymous functions:
+
+```
+L tax = fn(price, rate=0.2) { rt price * (1 + rate) }
+ptl tax(100)       ## 120.0  — uses default 20% rate
+ptl tax(100, 0.05) ## 105.0  — overrides with 5%
 ```
 
 ### Functions that return a value
@@ -1420,6 +1674,23 @@ ptl nums[7:]     ## [7, 8, 9]   — from index 7 to the end
 
 Either bound can be omitted. A slice always returns a **new** list.
 
+### Spreading one list into another — `...`
+
+The spread operator `...` expands a list in-place inside a new list literal.
+This is a clean way to combine lists or insert elements around an existing list:
+
+```
+L a = [1, 2, 3]
+L b = [4, 5]
+
+L combined = [...a, ...b]         ## [1, 2, 3, 4, 5]
+L with_zero = [0, ...a]           ## [0, 1, 2, 3]
+L with_extra = [...a, 99, 100]    ## [1, 2, 3, 99, 100]
+```
+
+The original lists are never modified. You can spread as many lists as you
+like, mix them with plain values, and use them in any order.
+
 ### List length
 
 ```
@@ -1630,6 +1901,32 @@ prices.del("banana")            ## remove a key
 L updated = prices.merge({"grape": 1.8})  ## combine two dicts into a new one
 ```
 
+### Spreading one dict into another — `...`
+
+The spread operator `...` works on dictionaries too. Inside a dict literal,
+`...d` expands all key-value pairs of `d` in-place. This is the most natural
+way to merge dicts or apply overrides:
+
+```
+L defaults = {"theme": "dark", "lang": "en", "font": 14}
+L overrides = {"theme": "light", "font": 16}
+
+L config = {...defaults, ...overrides}
+## {theme: light, lang: en, font: 16}
+## — overrides replaces "theme" and "font" from defaults
+```
+
+You can mix spread entries with regular `"key": value` pairs:
+
+```
+L base = {"x": 1, "y": 2}
+L extended = {...base, "z": 3, "y": 99}
+## {x: 1, y: 99, z: 3}
+## — later entries override earlier ones
+```
+
+The original dicts are never modified.
+
 ### Unpacking a dictionary into variables
 
 You can pull dictionary values into named variables using `L {key, key} = dict`:
@@ -1747,6 +2044,71 @@ fn example() {
     }
 }
 ptl example()    ## 42
+```
+
+### `finally` — code that always runs
+
+Add a `finally` block after `catch` and it will run **regardless of whether
+an error occurred**. This is useful for cleanup — closing resources, logging,
+resetting state — that must happen no matter what:
+
+```
+try {
+    processFile("data.txt")
+} catch e {
+    ptl f"Failed: {e}"
+} finally {
+    ptl "Processing complete."    ## prints whether it succeeded or failed
+}
+```
+
+`finally` runs even when `catch` is triggered:
+
+```
+L log = []
+
+try {
+    push(log, "start")
+    throw "oops"
+} catch e {
+    push(log, "error")
+} finally {
+    push(log, "cleanup")
+}
+
+ptl log    ## [start, error, cleanup]
+```
+
+### `assert` — declaring what must be true
+
+`assert expr` is a shorthand for "this must be true; if it isn't, stop immediately."
+It throws an `AssertionError` if the expression is false. You can add a message
+as a second argument:
+
+```
+assert x > 0               ## throws AssertionError: assertion failed
+assert x > 0, "x must be positive"   ## throws AssertionError: x must be positive
+```
+
+Assertions are most useful for catching programming mistakes early — checking
+that inputs are valid, that a function received sensible arguments, or that
+a list is non-empty before you process it:
+
+```
+fn divide(a, b) {
+    assert b != 0, "cannot divide by zero"
+    rt a / b
+}
+```
+
+They can be caught with `try/catch` like any other error:
+
+```
+try {
+    assert 1 == 2, "one is not two"
+} catch e {
+    ptl e    ## AssertionError: one is not two
+}
 ```
 
 ### Throwing errors yourself — `throw`
@@ -2271,6 +2633,32 @@ Use `use` for small helper files where you want its functions to feel like
 built-ins. Use `import as` for larger modules where you want clean separation
 and no chance of names colliding with your own code.
 
+### `from import` — selective import
+
+`from "file.minl" import { name1, name2 }` is a middle ground: it runs the
+module in its own isolated scope but then pulls specific names directly into
+your current scope. You get the cleanliness of a namespaced module without
+needing to type the alias prefix every time.
+
+**math_utils.minl:**
+```
+fn square(x) { rt x * x }
+fn cube(x)   { rt x * x * x }
+fn clamp(x, lo, hi) { rt x < lo ? lo : (x > hi ? hi : x) }
+```
+
+**main.minl:**
+```
+from "math_utils.minl" import { square, cube }
+
+ptl square(5)    ## 25  — no alias needed
+ptl cube(3)      ## 27
+
+## clamp was not imported — it is not accessible here
+```
+
+Only the names you list are imported. Everything else in the module stays private.
+
 ### Why split into files?
 
 - Code stays shorter and easier to read
@@ -2644,6 +3032,7 @@ wh T {
 L x = 5             ## declare
 x = 10              ## reassign
 x += 1              ## compound assign  (also -=  *=  /=  %=)
+x++   x--           ## increment / decrement
 L [a, b] = lst      ## list unpack
 L [a, *rest] = lst  ## list unpack with rest
 L {x, y} = dct      ## dict unpack
@@ -2666,10 +3055,20 @@ if x > 5 {
 } el {
 }
 cond ? a : b        ## ternary expression
+x in lst            ## membership: list / dict key / substring
+x ?? default        ## nil-coalescing: return x unless nil
+
+## ── SWITCH ───────────────────────────────────
+sw expr {
+    cs 1, 2 { ptl "low"   }    ## multiple values per case
+    cs 3    { ptl "three" }
+    df      { ptl "other" }    ## optional default
+}
 
 ## ── LOOPS ────────────────────────────────────
 lp i in rng(10) { }     ## for loop
 wh condition { }         ## while loop
+do { } wh condition      ## do-while — runs body at least once
 brk                      ## break
 cnt                      ## continue
 
@@ -2677,8 +3076,14 @@ cnt                      ## continue
 fn name(a, b) {
     rt a + b
 }
+fn name(a, b=10) { }     ## default parameter value
 fn name(*args) { }       ## variadic — args is a list
 fn(x) { rt x * 2 }       ## anonymous function (lambda)
+fn(x, n=1) { rt x + n }  ## lambda with default
+
+## ── ASSERT ───────────────────────────────────
+assert expr
+assert expr, "message"
 
 ## ── STRUCTS ───────────────────────────────────
 struct Animal {
@@ -2708,17 +3113,23 @@ try {
     risky()
 } catch e {
     ptl e
+} finally {
+    cleanup()              ## always runs
 }
 throw "something went wrong"   ## throw a string
 throw MyError("bad input")     ## throw a struct instance
 
 ## ── MODULES ──────────────────────────────────
-use "utils.minl"               ## run file in current scope
-import "utils.minl" as utils   ## isolated namespace
-utils.myFunc()                 ## call via alias
-utils.myVar                    ## read variable via alias
+use "utils.minl"                         ## run file in current scope
+import "utils.minl" as utils             ## isolated namespace
+utils.myFunc()                           ## call via alias
+from "utils.minl" import { myFunc, x }  ## selective — names land directly in scope
 ## inside a module file:
-export myFunc                  ## mark name for export
+export myFunc                            ## mark name for export
+
+## ── SPREAD ───────────────────────────────────
+L c = [...a, ...b, 99]    ## list spread — expand in-place
+L m = {...d1, ...d2}      ## dict spread — merge key-value pairs
 
 ## ── TYPES ────────────────────────────────────
 T  F  nil             ## true, false, null
@@ -2732,6 +3143,8 @@ T  F  nil             ## true, false, null
 == != < > <= >=       ## comparison
 &&  ||  !             ## logical
 &  |  ^  ~  <<  >>    ## bitwise
+x in collection       ## membership test
+x ?? fallback         ## nil-coalescing
 
 ## ── SLICES ───────────────────────────────────
 lst[2:5]   lst[:3]   lst[7:]   ## lists
@@ -2742,17 +3155,29 @@ obj?.method()         ## nil if obj is nil
 obj?.attr             ## nil if obj is nil
 
 ## ── MATH ─────────────────────────────────────
-+ - * / % // **  pow(a,b)  sqrt(x)  abs(x)
-floor(x)  ceil(x)  rnd(x, 2)  max(a,b)  min(a,b)
++ - * / % // **       pow(a,b)  sqrt(x)  abs(x)
+floor(x)  ceil(x)  trunc(x)  rnd(x, 2)  max(a,b)  min(a,b)
+sign(x)   gcd(a,b)  lcm(a,b)  hypot(a,b)
 log(x)  sin(x)  cos(x)  tan(x)
+asin(x)  acos(x)  atan(x)  atan2(y,x)
 fmt(x, ".2f")         ## format number to string
 
 ## ── STRINGS ──────────────────────────────────
 len(s)  up(s)  lo(s)  trim(s)
 split(s, ",")  join(lst, "-")
 find(s, sub)  contains(s, sub)
-replace(s, old, new)  sub(s, start, end)
+replace(s, old, new)  sub(s, start, end)  rep(s, n)
 startsWith(s, x)  endsWith(s, x)
+## Method-style:
+s.up()  s.lo()  s.trim()  s.lstrip()  s.rstrip()
+s.split(",")  s.find(x)  s.has(x)  s.replace(a,b)
+s.startsWith(x)  s.endsWith(x)
+s.padL(n)  s.padL(n, "0")   ## left-pad to width n
+s.padR(n)  s.padR(n, "-")   ## right-pad to width n
+s.repeat(n)                  ## repeat string n times
+s.chars()                    ## split into list of characters
+s.isNum()                    ## T if every character is a digit
+s.isAlpha()                  ## T if every character is a letter
 
 ## ── LISTS ────────────────────────────────────
 len(lst)  push(lst, x)  pop(lst)

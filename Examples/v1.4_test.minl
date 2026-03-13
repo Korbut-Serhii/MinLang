@@ -1,0 +1,31 @@
+
+fn describe(item, prefix="Item") {
+    rt f"{prefix}: {item}"
+}
+
+L tags = ["sale", "new"]
+L extra = ["hot"]
+L all_tags = [...tags, ...extra]
+
+lp tag in all_tags {
+    ptl describe(tag)
+}
+
+L raw = nil
+ptl raw ?? "unknown"    ## unknown
+
+L n = 1
+do { n++ } wh n < 4    ## n = 4
+
+sw n {
+    cs 4 { ptl "four" }
+    df   { ptl "other" }
+}
+
+try {
+    assert n == 4, "expected 4"
+} catch e {
+    ptl e
+} finally {
+    ptl "done"
+}
